@@ -1,5 +1,5 @@
 # Actix Ratelimit
-Rate limiting framework for Actix web
+Rate limiting middleware framework for Actix web
 
 ## Installation
 
