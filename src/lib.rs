@@ -11,39 +11,62 @@ use actix_web::{
     http::header::{HeaderName, HeaderValue}
 };
 
+
 pub trait RateLimit{
-    fn get() -> ();
-    fn set() -> ();
-    fn callback() -> Result<(), AWError> {
+    fn get_identifier<T: Into<String>>(&self, req: &ServiceRequest) -> T;
+    fn get_remaining<T: Into<String>>(&self, key: T) -> usize;
+    fn set<T: Into<String>>(&mut self, key: T, value: usize) -> ();
+    fn callback(&mut self) -> Result<(), AWError> {
         Ok(())
     }
-    fn set_headers(mut res: ServiceResponse) {
+    fn clear<T: Into<String>>(&mut self, key: T) -> () {}
+}
+
+
+
+pub struct RateLimiter<T: RateLimit>{
+    interval: usize,
+    max_requests: usize,
+    store: Rc<RefCell<T>>
+}
+
+impl<T: RateLimit> RateLimiter<T> {
+    pub fn new(store: T) -> Self {
+        RateLimiter{
+            interval: 0,
+            max_requests: 0,
+            store: Rc::new(RefCell::new(store))
+        }
+    }
+
+    pub fn with_interval(mut self, interval: usize) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    pub fn with_max_requests(mut self, max_requests: usize) -> Self {
+        self.max_requests = max_requests;
+        self
+    }
+
+    fn set_headers(&self, mut res: ServiceResponse, remaining: usize) {
         let headers = res.headers_mut();
         headers.insert(
             HeaderName::from_static("x-ratelimit-limit"),
-            HeaderValue::from_str("2").unwrap()
+            HeaderValue::from_str(&self.max_requests.to_string()).unwrap()
         );
         headers.insert(
             HeaderName::from_static("x-ratelimit-remaining"),
-            HeaderValue::from_str("2").unwrap()
+            HeaderValue::from_str(&remaining.to_string()).unwrap()
         );
         headers.insert(
             HeaderName::from_static("x-ratelimit-reset"),
-            HeaderValue::from_str("2").unwrap()
+            HeaderValue::from_str(&self.interval.to_string()).unwrap()
         );
     }
 }
 
-struct RateData{
-    interval: usize,
-    max_requests: usize
-}
-
-struct RateLimitService<T: RateLimit>{
-    inner: Rc<T>
-}
-
-impl<T, S, B> Transform<S> for RateLimitService<T>
+impl<T: 'static, S, B> Transform<S> for RateLimiter<T>
 where
     T: RateLimit,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError>  + 'static,
@@ -60,21 +83,21 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         ok(RateLimitMiddleware {
             service: Rc::new(RefCell::new(service)),
-            inner: self.inner.clone()
+            store: self.store.clone()
         })
     }
 }
 
 
-struct RateLimitMiddleware<S: 'static, T: RateLimit> {
+pub struct RateLimitMiddleware<S: 'static, T: RateLimit> {
     service: Rc<RefCell<S>>,
-    inner: Rc<T>
+    store: Rc<RefCell<T>>
 }
 
-impl <T, S,B> Service for RateLimitMiddleware<S, T>
+impl <T: 'static, S,B> Service for RateLimitMiddleware<S, T>
 where
     T: RateLimit,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError>,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
 {
@@ -87,13 +110,26 @@ where
         self.service.borrow_mut().poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: ServiceRequest) -> Self::Future {
-        let fut = self.service.call(req);
+    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+        let store_clone = self.store.clone();
+        let mut srv = self.service.clone();
         Box::pin(async move {
-            let res = fut.await?;
-
-            println!("Hi from response");
-            Ok(res)
+            let store = store_clone.borrow();
+            let mut store_mut = store_clone.borrow_mut();
+            let identifier: String = store.get_identifier(&req);
+            let remaining = store.get_remaining(&identifier);
+            if remaining == 0 {
+                let fut = srv.call(req);
+                let res = fut.await?;
+                Ok(res)
+            } else {
+                // Execute the req
+                // Decrement value
+                store_mut.set(&identifier, remaining + 1);
+                let fut = srv.call(req);
+                let res = fut.await?;
+                Ok(res)
+            }
         })
     }
 }
