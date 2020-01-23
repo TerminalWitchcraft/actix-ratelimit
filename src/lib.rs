@@ -1,4 +1,4 @@
-
+//! Rate limiting middleware framework for actix-web
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::future::Future;
@@ -12,18 +12,48 @@ use actix_web::{
 };
 
 
+/// Trait that implements functions required for buidling a RateLimiter.
 pub trait RateLimit{
+
+    /// Get the identifier use to identify a request. Identifiers are used to identify a client. You can use
+    /// the `ServiceRequest` parameter to
+    /// extract one, or you could use your own identifier from different source.  Most commonly
+    /// used identifiers are IP address, cookies, cached data, etc
     fn get_identifier<T: Into<String>>(&self, req: &ServiceRequest) -> T;
+
+    /// Get the remaining number of accesses based on `key`. Here, `key` is used as the identifier
+    /// returned by `get_identifier` function. This functions queries the `store` to get the
+    /// reamining number of accesses.
     fn get_remaining<T: Into<String>>(&self, key: T) -> usize;
+
+    /// Sets the access count for the client identified by key to a value `value`. Again, key is
+    /// the identifier returned by `get_identifier` function.
     fn set<T: Into<String>>(&mut self, key: T, value: usize) -> ();
+
+    /// Callback to execute after each processing of the middleware. You can add your custom
+    /// implementation according to your needs. For example, if you want to log client which used
+    /// 95% of the quota, you could do so by:
+    /// TODO
     fn callback(&mut self) -> Result<(), AWError> {
         Ok(())
     }
-    fn clear<T: Into<String>>(&mut self, key: T) -> () {}
+
+    /// The purpose of this function is to clear the remaining count for the client identified by
+    /// `key`. Note, this sets the store value for the given client identified by key to 0 so that
+    /// no further access will be granted by that client
+    fn clear_cache<T: Into<String>>(&mut self, key: T) -> () {}
+
+    /// The purpose of this function is to reset the remaining count for the client identified by
+    /// `key`. Note, this sets the store value for the given client identified by key to `remaining` so that
+    /// access count is restored for that client
+    fn reset_cache<T: Into<String>>(&mut self, key: T) -> () {}
 }
 
 
-
+/// Type that implements the ratelimit middleware. This accepts `interval` which specifies the
+/// window size, `max_requests` which specifies the maximum number of requests in that window, and
+/// `store` which is essentially a data store used to store client access information. Store is any
+/// type that implements `RateLimit` trait.
 pub struct RateLimiter<T: RateLimit>{
     interval: usize,
     max_requests: usize,
@@ -31,6 +61,8 @@ pub struct RateLimiter<T: RateLimit>{
 }
 
 impl<T: RateLimit> RateLimiter<T> {
+
+    /// Creates a new instance of `RateLimiter`.
     pub fn new(store: T) -> Self {
         RateLimiter{
             interval: 0,
@@ -39,11 +71,13 @@ impl<T: RateLimit> RateLimiter<T> {
         }
     }
 
+    /// Specify the interval
     pub fn with_interval(mut self, interval: usize) -> Self {
         self.interval = interval;
         self
     }
 
+    /// Specify the maximum number of requests allowed.
     pub fn with_max_requests(mut self, max_requests: usize) -> Self {
         self.max_requests = max_requests;
         self
@@ -89,6 +123,7 @@ where
 }
 
 
+/// Middleware for RateLimiter.
 pub struct RateLimitMiddleware<S: 'static, T: RateLimit> {
     service: Rc<RefCell<S>>,
     store: Rc<RefCell<T>>
