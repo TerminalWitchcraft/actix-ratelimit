@@ -11,6 +11,7 @@ use actix_web::{
     http::header::{HeaderName, HeaderValue}
 };
 
+mod timers;
 
 /// Trait that implements functions required for buidling a RateLimiter.
 pub trait RateLimit{
@@ -19,16 +20,18 @@ pub trait RateLimit{
     /// the `ServiceRequest` parameter to
     /// extract one, or you could use your own identifier from different source.  Most commonly
     /// used identifiers are IP address, cookies, cached data, etc
-    fn get_identifier<T: Into<String>>(&self, req: &ServiceRequest) -> T;
+    fn client_identifier<T: Into<String>>(&self, req: &ServiceRequest) -> T;
 
     /// Get the remaining number of accesses based on `key`. Here, `key` is used as the identifier
     /// returned by `get_identifier` function. This functions queries the `store` to get the
     /// reamining number of accesses.
-    fn get_remaining<T: Into<String>>(&self, key: T) -> usize;
+    fn get<T: Into<String>>(&self, key: T) -> usize;
 
     /// Sets the access count for the client identified by key to a value `value`. Again, key is
     /// the identifier returned by `get_identifier` function.
     fn set<T: Into<String>>(&mut self, key: T, value: usize) -> ();
+
+    fn remove<T: Into<String>>(&mut self, key: T) -> ();
 
     /// Callback to execute after each processing of the middleware. You can add your custom
     /// implementation according to your needs. For example, if you want to log client which used
@@ -41,12 +44,15 @@ pub trait RateLimit{
     /// The purpose of this function is to clear the remaining count for the client identified by
     /// `key`. Note, this sets the store value for the given client identified by key to 0 so that
     /// no further access will be granted by that client
-    fn clear_cache<T: Into<String>>(&mut self, key: T) -> () {}
+    /// TODO Is this even necessary? we could probably do this at Struct level
+    fn clear_cache<T: Into<String>>(&mut self, key: T) -> () {
+        self.set(key, 0)
+    }
 
-    /// The purpose of this function is to reset the remaining count for the client identified by
-    /// `key`. Note, this sets the store value for the given client identified by key to `remaining` so that
-    /// access count is restored for that client
-    fn reset_cache<T: Into<String>>(&mut self, key: T) -> () {}
+    // /// The purpose of this function is to reset the remaining count for the client identified by
+    // /// `key`. Note, this sets the store value for the given client identified by key to `remaining` so that
+    // /// access count is restored for that client
+    // fn reset_cache<T: Into<String>>(&mut self, key: T) -> () {}
 }
 
 
@@ -151,8 +157,8 @@ where
         Box::pin(async move {
             let store = store_clone.borrow();
             let mut store_mut = store_clone.borrow_mut();
-            let identifier: String = store.get_identifier(&req);
-            let remaining = store.get_remaining(&identifier);
+            let identifier: String = store.client_identifier(&req);
+            let remaining = store.get(&identifier);
             if remaining == 0 {
                 let fut = srv.call(req);
                 let res = fut.await?;
