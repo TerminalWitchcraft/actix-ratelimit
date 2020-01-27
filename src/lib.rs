@@ -1,10 +1,13 @@
 //! Rate limiting middleware framework for actix-web
+
+use std::time::Duration;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::future::Future;
 use std::task::{Context, Poll};
 use std::pin::Pin;
 use futures::future::{ok, Ready};
+use actix::prelude::*;
 use actix_web::{
     dev::{ServiceRequest, ServiceResponse, Service, Transform},
     error::Error as AWError,
@@ -12,6 +15,7 @@ use actix_web::{
 };
 
 mod timers;
+mod stores;
 
 /// Trait that implements functions required for buidling a RateLimiter.
 pub trait RateLimit{
@@ -20,18 +24,18 @@ pub trait RateLimit{
     /// the `ServiceRequest` parameter to
     /// extract one, or you could use your own identifier from different source.  Most commonly
     /// used identifiers are IP address, cookies, cached data, etc
-    fn client_identifier<T: Into<String>>(&self, req: &ServiceRequest) -> T;
+    fn client_identifier(&self, req: &ServiceRequest) -> Result<String, AWError>;
 
     /// Get the remaining number of accesses based on `key`. Here, `key` is used as the identifier
     /// returned by `get_identifier` function. This functions queries the `store` to get the
     /// reamining number of accesses.
-    fn get<T: Into<String>>(&self, key: T) -> usize;
+    fn get(&self, key: &str) -> Result<usize, AWError>;
 
     /// Sets the access count for the client identified by key to a value `value`. Again, key is
     /// the identifier returned by `get_identifier` function.
-    fn set<T: Into<String>>(&mut self, key: T, value: usize) -> ();
+    fn set(&self, key: String, value: usize) -> Result<(), AWError>;
 
-    fn remove<T: Into<String>>(&mut self, key: T) -> ();
+    fn remove(&self, key: String) -> Result<usize, AWError>;
 
     /// Callback to execute after each processing of the middleware. You can add your custom
     /// implementation according to your needs. For example, if you want to log client which used
@@ -41,18 +45,6 @@ pub trait RateLimit{
         Ok(())
     }
 
-    /// The purpose of this function is to clear the remaining count for the client identified by
-    /// `key`. Note, this sets the store value for the given client identified by key to 0 so that
-    /// no further access will be granted by that client
-    /// TODO Is this even necessary? we could probably do this at Struct level
-    fn clear_cache<T: Into<String>>(&mut self, key: T) -> () {
-        self.set(key, 0)
-    }
-
-    // /// The purpose of this function is to reset the remaining count for the client identified by
-    // /// `key`. Note, this sets the store value for the given client identified by key to `remaining` so that
-    // /// access count is restored for that client
-    // fn reset_cache<T: Into<String>>(&mut self, key: T) -> () {}
 }
 
 
@@ -60,25 +52,47 @@ pub trait RateLimit{
 /// window size, `max_requests` which specifies the maximum number of requests in that window, and
 /// `store` which is essentially a data store used to store client access information. Store is any
 /// type that implements `RateLimit` trait.
-pub struct RateLimiter<T: RateLimit>{
-    interval: usize,
+pub struct RateLimiter<T, A>
+where
+    T: RateLimit + 'static,
+    A: Actor + Handler<timers::Task<String, T>>
+{
+    interval: Duration,
     max_requests: usize,
-    store: Rc<RefCell<T>>
+    store: Rc<RefCell<T>>,
+    timer: Option<Addr<A>>
 }
 
-impl<T: RateLimit> RateLimiter<T> {
+impl Default for RateLimiter<stores::MemoryStore, timers::TimerActor>
+{
+    fn default() -> Self {
+        RateLimiter{
+            interval: Duration::from_secs(0),
+            max_requests: 0,
+            store: Rc::new(RefCell::new(stores::MemoryStore::new())),
+            timer: Some(timers::TimerActor::start(Duration::from_secs(0)))
+        }
+    }
+}
+
+impl<T, A> RateLimiter<T, A>
+where
+    T: RateLimit + 'static,
+    A: Actor + Handler<timers::Task<String, T>>
+{
 
     /// Creates a new instance of `RateLimiter`.
     pub fn new(store: T) -> Self {
         RateLimiter{
-            interval: 0,
+            interval: Duration::from_secs(0),
             max_requests: 0,
-            store: Rc::new(RefCell::new(store))
+            store: Rc::new(RefCell::new(store)),
+            timer: None
         }
     }
 
     /// Specify the interval
-    pub fn with_interval(mut self, interval: usize) -> Self {
+    pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
         self
     }
@@ -89,6 +103,13 @@ impl<T: RateLimit> RateLimiter<T> {
         self
     }
 
+    /// Specify actix actor to handle delayes task
+    pub fn with_timer(mut self, addr: Addr<A>) -> Self {
+        self.timer = Some(addr);
+        self
+    }
+
+    #[allow(dead_code)]
     fn set_headers(&self, mut res: ServiceResponse, remaining: usize) {
         let headers = res.headers_mut();
         headers.insert(
@@ -101,14 +122,15 @@ impl<T: RateLimit> RateLimiter<T> {
         );
         headers.insert(
             HeaderName::from_static("x-ratelimit-reset"),
-            HeaderValue::from_str(&self.interval.to_string()).unwrap()
+            HeaderValue::from_str(&self.interval.as_secs().to_string()).unwrap()
         );
     }
 }
 
-impl<T: 'static, S, B> Transform<S> for RateLimiter<T>
+impl<T: 'static, A, S, B> Transform<S> for RateLimiter<T, A>
 where
     T: RateLimit,
+    A: Actor + Handler<timers::Task<String, T>>,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError>  + 'static,
     S::Future: 'static,
     B: 'static,
@@ -156,9 +178,9 @@ where
         let mut srv = self.service.clone();
         Box::pin(async move {
             let store = store_clone.borrow();
-            let mut store_mut = store_clone.borrow_mut();
-            let identifier: String = store.client_identifier(&req);
-            let remaining = store.get(&identifier);
+            let store_mut = store_clone.borrow_mut();
+            let identifier: String = store.client_identifier(&req)?;
+            let remaining = store.get(&identifier)?;
             if remaining == 0 {
                 let fut = srv.call(req);
                 let res = fut.await?;
@@ -166,7 +188,7 @@ where
             } else {
                 // Execute the req
                 // Decrement value
-                store_mut.set(&identifier, remaining + 1);
+                store_mut.set(identifier, remaining + 1)?;
                 let fut = srv.call(req);
                 let res = fut.await?;
                 Ok(res)
