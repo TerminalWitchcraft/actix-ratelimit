@@ -6,7 +6,7 @@ use actix_web::Error as AWError;
 
 use crate::RateLimit;
 
-struct Task<K, T>
+pub struct Task<K, T>
 where
     K: Into<String> + 'static,
     T: RateLimit + 'static,
@@ -56,8 +56,10 @@ where
     T: RateLimit + 'static,
 {
     type Result = Result<(), AWError>;
-    fn handle(&mut self, mut msg: Task<K, T>, ctx: &mut Self::Context) -> Self::Result {
-        let _ = ctx.run_later(self.delay, move |_, _| msg.store.remove(msg.key));
+    fn handle(&mut self, msg: Task<K, T>, ctx: &mut Self::Context) -> Self::Result {
+        let _ = ctx.run_later(self.delay, move |_, _| {
+            msg.store.remove(msg.key.into()).unwrap();
+        });
         Ok(())
     }
 }
