@@ -58,7 +58,7 @@ where
     type Result = Result<(), AWError>;
     fn handle(&mut self, msg: Task<K, T>, ctx: &mut Self::Context) -> Self::Result {
         let _ = ctx.run_later(self.delay, move |_, _| {
-            msg.store.remove(msg.key.into()).unwrap();
+            msg.store.remove(&msg.key.into()).unwrap();
         });
         Ok(())
     }

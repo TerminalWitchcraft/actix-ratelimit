@@ -1,7 +1,8 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dashmap::DashMap;
 use actix_web::dev::ServiceRequest;
 use actix_web::Error as AWError;
+use actix_web::web::HttpResponse;
 
 use crate::RateLimit;
 
@@ -56,8 +57,22 @@ impl RateLimit for MemoryStore
         Ok(())
     }
 
-    fn remove(&self, key: String) -> Result<usize, AWError> {
-        let val = self.inner.remove::<String>(&key).unwrap();
+    fn expire(&self, key: &str) -> Result<Duration, AWError> {
+        match self.inner.get(key){
+            Some(c) => {
+                let dur = c.value().1;
+                let now = SystemTime::now();
+                let dur = dur - now.duration_since(UNIX_EPOCH).unwrap();
+                Ok(dur)
+            },
+            None => {
+                Err(HttpResponse::InternalServerError().into())
+            }
+        }
+    }
+
+    fn remove(&self, key: &str) -> Result<usize, AWError> {
+        let val = self.inner.remove::<String>(&key.to_string()).unwrap();
         let val = val.1;
         Ok(val.0)
     }
