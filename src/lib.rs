@@ -1,6 +1,6 @@
 //! Rate limiting middleware framework for actix-web
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::future::Future;
@@ -32,11 +32,11 @@ pub trait RateLimit{
     /// Get the remaining number of accesses based on `key`. Here, `key` is used as the identifier
     /// returned by `get_identifier` function. This functions queries the `store` to get the
     /// reamining number of accesses.
-    fn get(&self, key: &str) -> Result<usize, AWError>;
+    fn get(&self, key: &str) -> Result<Option<usize>, AWError>;
 
     /// Sets the access count for the client identified by key to a value `value`. Again, key is
     /// the identifier returned by `get_identifier` function.
-    fn set(&self, key: String, value: usize) -> Result<(), AWError>;
+    fn set(&self, key: String, value: usize, expiry: Option<Duration>) -> Result<(), AWError>;
 
     fn remove(&self, key: String) -> Result<usize, AWError>;
 
@@ -142,6 +142,7 @@ where
             service: Rc::new(RefCell::new(service)),
             store: self.store.clone(),
             max_requests: self.max_requests,
+            interval: self.interval.as_secs()
         })
     }
 }
@@ -151,8 +152,9 @@ where
 pub struct RateLimitMiddleware<S: 'static, T: RateLimit> {
     service: Rc<RefCell<S>>,
     store: Rc<RefCell<T>>,
-    // Exists here for the sole purpose of knowing the max_requests from RateLimiter
+    // Exists here for the sole purpose of knowing the max_requests and interval from RateLimiter
     max_requests: usize,
+    interval: u64
 }
 
 impl <T: 'static, S,B> Service for RateLimitMiddleware<S, T>
@@ -175,42 +177,70 @@ where
         let store_clone = self.store.clone();
         let mut srv = self.service.clone();
         let max_requests = self.max_requests;
+        let interval = Duration::from_secs(self.interval);
         Box::pin(async move {
             let store = store_clone.borrow();
             let identifier: String = store.client_identifier(&req)?;
-            let remaining = store.get(&identifier)?;
-            // TODO
-            let reset = 0usize;
-            if remaining == 0 {
-                info!("Limit exceeded for client: {}", &identifier);
-                let response = HttpResponse::TooManyRequests();
-                let mut response = store.error_callback(response);
-                response.set_header("x-ratelimit-limit", max_requests.to_string());
-                response.set_header("x-ratelimit-remaining", remaining.to_string());
-                response.set_header("x-ratelimit-reset", reset.to_string());
-                Err(store.error_callback(response).into())
-            } else {
-                // Execute the req
-                // Decrement value
-                store.set(identifier, remaining + 1)?;
-                let fut = srv.call(req);
-                let mut res = fut.await?;
-                let headers = res.headers_mut();
-                // Safe unwraps, since usize is always convertible to string
-                headers.insert(
-                    HeaderName::from_static("x-ratelimit-limit"),
-                    HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
-                );
-                headers.insert(
-                    HeaderName::from_static("x-ratelimit-remaining"),
-                    HeaderValue::from_str(remaining.to_string().as_str()).unwrap(),
-                );
-                headers.insert(
-                    HeaderName::from_static("x-ratelimit-reset"),
-                    HeaderValue::from_str(reset.to_string().as_str()).unwrap(),
-                );
-                Ok(res)
+            let remaining: Option<usize> = store.get(&identifier)?;
+            match remaining{
+                // Existing entry in store
+                Some(c) => {
+                    let reset = 0usize;
+                    if c == 0 {
+                        info!("Limit exceeded for client: {}", &identifier);
+                        let response = HttpResponse::TooManyRequests();
+                        let mut response = store.error_callback(response);
+                        response.set_header("x-ratelimit-limit", max_requests.to_string());
+                        response.set_header("x-ratelimit-remaining", c.to_string());
+                        response.set_header("x-ratelimit-reset", reset.to_string());
+                        Err(store.error_callback(response).into())
+                    } else {
+                        // Execute the req
+                        // Decrement value
+                        store.set(identifier, c + 1, None)?;
+                        let fut = srv.call(req);
+                        let mut res = fut.await?;
+                        let headers = res.headers_mut();
+                        // Safe unwraps, since usize is always convertible to string
+                        headers.insert(
+                            HeaderName::from_static("x-ratelimit-limit"),
+                            HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                        );
+                        headers.insert(
+                            HeaderName::from_static("x-ratelimit-remaining"),
+                            HeaderValue::from_str(c.to_string().as_str()).unwrap(),
+                        );
+                        headers.insert(
+                            HeaderName::from_static("x-ratelimit-reset"),
+                            HeaderValue::from_str(reset.to_string().as_str()).unwrap(),
+                        );
+                        Ok(res)
+                    }
+                },
+                // New client, create entry in store
+                None => {
+                    let now = SystemTime::now();
+                    store.set(identifier, max_requests, Some(now.duration_since(UNIX_EPOCH).unwrap() + interval))?;
+                    let fut = srv.call(req);
+                    let mut res = fut.await?;
+                    let headers = res.headers_mut();
+                    // Safe unwraps, since usize is always convertible to string
+                    headers.insert(
+                        HeaderName::from_static("x-ratelimit-limit"),
+                        HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                    );
+                    headers.insert(
+                        HeaderName::from_static("x-ratelimit-remaining"),
+                        HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                    );
+                    headers.insert(
+                        HeaderName::from_static("x-ratelimit-reset"),
+                        HeaderValue::from_str(interval.as_secs().to_string().as_str()).unwrap(),
+                    );
+                    Ok(res)
+                }
             }
+            // TODO
         })
     }
 }
