@@ -38,7 +38,10 @@ pub trait RateLimit{
     /// the identifier returned by `get_identifier` function.
     fn set(&self, key: String, value: usize, expiry: Option<Duration>) -> Result<(), AWError>;
 
-    fn remove(&self, key: String) -> Result<usize, AWError>;
+    /// Get the expiry for the given key
+    fn expire(&self, key: &str) -> Result<Duration, AWError>;
+
+    fn remove(&self, key: &str) -> Result<usize, AWError>;
 
     /// Callback to execute after each processing of the middleware. You can add your custom
     /// implementation according to your needs. For example, if you want to log client which used
@@ -47,14 +50,6 @@ pub trait RateLimit{
     fn error_callback(&self, mut response: HttpResponseBuilder) -> HttpResponseBuilder {
         response
     }
-
-    // /// Sets the response headers
-    // fn set_headers(&self, response: &mut HttpResponseBuilder, max_requests:usize, remaining: usize, reset: usize) {
-    //     debug!("Setting headers...");
-    //     response.set_header("x-ratelimit-limit", max_requests.to_string());
-    //     response.set_header("x-ratelimit-remaining", remaining.to_string());
-    //     response.set_header("x-ratelimit-reset", reset.to_string());
-    // }
 
 }
 
@@ -142,24 +137,28 @@ where
             service: Rc::new(RefCell::new(service)),
             store: self.store.clone(),
             max_requests: self.max_requests,
-            interval: self.interval.as_secs()
+            interval: self.interval.as_secs(),
         })
     }
 }
 
 
 /// Middleware for RateLimiter.
-pub struct RateLimitMiddleware<S: 'static, T: RateLimit> {
+pub struct RateLimitMiddleware<S, T>
+where
+    S: 'static,
+    T: RateLimit + 'static,
+{
     service: Rc<RefCell<S>>,
     store: Rc<RefCell<T>>,
     // Exists here for the sole purpose of knowing the max_requests and interval from RateLimiter
     max_requests: usize,
-    interval: u64
+    interval: u64,
 }
 
-impl <T: 'static, S,B> Service for RateLimitMiddleware<S, T>
+impl <T, S, B> Service for RateLimitMiddleware<S, T>
 where
-    T: RateLimit,
+    T: RateLimit + 'static,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
@@ -185,14 +184,14 @@ where
             match remaining{
                 // Existing entry in store
                 Some(c) => {
-                    let reset = 0usize;
+                    let reset = store.expire(&identifier)?;
                     if c == 0 {
                         info!("Limit exceeded for client: {}", &identifier);
                         let response = HttpResponse::TooManyRequests();
                         let mut response = store.error_callback(response);
                         response.set_header("x-ratelimit-limit", max_requests.to_string());
                         response.set_header("x-ratelimit-remaining", c.to_string());
-                        response.set_header("x-ratelimit-reset", reset.to_string());
+                        response.set_header("x-ratelimit-reset", reset.as_secs().to_string());
                         Err(store.error_callback(response).into())
                     } else {
                         // Execute the req
@@ -212,7 +211,7 @@ where
                         );
                         headers.insert(
                             HeaderName::from_static("x-ratelimit-reset"),
-                            HeaderValue::from_str(reset.to_string().as_str()).unwrap(),
+                            HeaderValue::from_str(reset.as_secs().to_string().as_str()).unwrap(),
                         );
                         Ok(res)
                     }
@@ -220,7 +219,13 @@ where
                 // New client, create entry in store
                 None => {
                     let now = SystemTime::now();
-                    store.set(identifier, max_requests, Some(now.duration_since(UNIX_EPOCH).unwrap() + interval))?;
+                    store.set(identifier, max_requests,
+                        Some(now.duration_since(UNIX_EPOCH).unwrap() + interval))?;
+                    // [TODO]Send a task to delete key after `interval` if Actor is preset
+                    // if let Some(c) = timer{
+                    //     let task = timers::Task{key: identifier, store: store}
+                    //     c.send()
+                    // };
                     let fut = srv.call(req);
                     let mut res = fut.await?;
                     let headers = res.headers_mut();
