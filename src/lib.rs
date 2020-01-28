@@ -6,12 +6,15 @@ use std::cell::RefCell;
 use std::future::Future;
 use std::task::{Context, Poll};
 use std::pin::Pin;
+
+use log::*;
 use futures::future::{ok, Ready};
 use actix::prelude::*;
+use actix_web::HttpResponse;
 use actix_web::{
-    dev::{ServiceRequest, ServiceResponse, Service, Transform},
+    dev::{ServiceRequest, ServiceResponse, Service, Transform, HttpResponseBuilder},
     error::Error as AWError,
-    http::header::{HeaderName, HeaderValue}
+    http::{HeaderName, HeaderValue},
 };
 
 mod timers;
@@ -40,10 +43,18 @@ pub trait RateLimit{
     /// Callback to execute after each processing of the middleware. You can add your custom
     /// implementation according to your needs. For example, if you want to log client which used
     /// 95% of the quota, you could do so by:
-    /// TODO
-    fn callback(&mut self) -> Result<(), AWError> {
-        Ok(())
+    #[allow(unused_mut)]
+    fn error_callback(&self, mut response: HttpResponseBuilder) -> HttpResponseBuilder {
+        response
     }
+
+    // /// Sets the response headers
+    // fn set_headers(&self, response: &mut HttpResponseBuilder, max_requests:usize, remaining: usize, reset: usize) {
+    //     debug!("Setting headers...");
+    //     response.set_header("x-ratelimit-limit", max_requests.to_string());
+    //     response.set_header("x-ratelimit-remaining", remaining.to_string());
+    //     response.set_header("x-ratelimit-reset", reset.to_string());
+    // }
 
 }
 
@@ -109,22 +120,6 @@ where
         self
     }
 
-    #[allow(dead_code)]
-    fn set_headers(&self, mut res: ServiceResponse, remaining: usize) {
-        let headers = res.headers_mut();
-        headers.insert(
-            HeaderName::from_static("x-ratelimit-limit"),
-            HeaderValue::from_str(&self.max_requests.to_string()).unwrap()
-        );
-        headers.insert(
-            HeaderName::from_static("x-ratelimit-remaining"),
-            HeaderValue::from_str(&remaining.to_string()).unwrap()
-        );
-        headers.insert(
-            HeaderName::from_static("x-ratelimit-reset"),
-            HeaderValue::from_str(&self.interval.as_secs().to_string()).unwrap()
-        );
-    }
 }
 
 impl<T: 'static, A, S, B> Transform<S> for RateLimiter<T, A>
@@ -145,7 +140,8 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         ok(RateLimitMiddleware {
             service: Rc::new(RefCell::new(service)),
-            store: self.store.clone()
+            store: self.store.clone(),
+            max_requests: self.max_requests,
         })
     }
 }
@@ -154,7 +150,9 @@ where
 /// Middleware for RateLimiter.
 pub struct RateLimitMiddleware<S: 'static, T: RateLimit> {
     service: Rc<RefCell<S>>,
-    store: Rc<RefCell<T>>
+    store: Rc<RefCell<T>>,
+    // Exists here for the sole purpose of knowing the max_requests from RateLimiter
+    max_requests: usize,
 }
 
 impl <T: 'static, S,B> Service for RateLimitMiddleware<S, T>
@@ -176,21 +174,41 @@ where
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
         let store_clone = self.store.clone();
         let mut srv = self.service.clone();
+        let max_requests = self.max_requests;
         Box::pin(async move {
             let store = store_clone.borrow();
-            let store_mut = store_clone.borrow_mut();
             let identifier: String = store.client_identifier(&req)?;
             let remaining = store.get(&identifier)?;
+            // TODO
+            let reset = 0usize;
             if remaining == 0 {
-                let fut = srv.call(req);
-                let res = fut.await?;
-                Ok(res)
+                info!("Limit exceeded for client: {}", &identifier);
+                let response = HttpResponse::TooManyRequests();
+                let mut response = store.error_callback(response);
+                response.set_header("x-ratelimit-limit", max_requests.to_string());
+                response.set_header("x-ratelimit-remaining", remaining.to_string());
+                response.set_header("x-ratelimit-reset", reset.to_string());
+                Err(store.error_callback(response).into())
             } else {
                 // Execute the req
                 // Decrement value
-                store_mut.set(identifier, remaining + 1)?;
+                store.set(identifier, remaining + 1)?;
                 let fut = srv.call(req);
-                let res = fut.await?;
+                let mut res = fut.await?;
+                let headers = res.headers_mut();
+                // Safe unwraps, since usize is always convertible to string
+                headers.insert(
+                    HeaderName::from_static("x-ratelimit-limit"),
+                    HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                );
+                headers.insert(
+                    HeaderName::from_static("x-ratelimit-remaining"),
+                    HeaderValue::from_str(remaining.to_string().as_str()).unwrap(),
+                );
+                headers.insert(
+                    HeaderName::from_static("x-ratelimit-reset"),
+                    HeaderValue::from_str(reset.to_string().as_str()).unwrap(),
+                );
                 Ok(res)
             }
         })
