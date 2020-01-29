@@ -1,41 +1,38 @@
 use log::*;
 use std::time::Duration;
-use std::marker::Send;
 use std::sync::Arc;
 use actix::Actor;
 use actix::prelude::*;
 
 use crate::RateLimit;
 
-pub struct Task<K, T>
+pub struct Task<K>
 where
     K: Into<String> + 'static,
-    T: RateLimit + Send + 'static,
 {
     pub key: K,
-    pub store: Arc<T>
 }
 
-impl<K, T> Message for Task<K, T>
+impl<K> Message for Task<K>
 where
     K: Into<String> + 'static,
-    T: RateLimit + Send + 'static,
 {
     type Result = ();
 }
 
-pub(crate) struct TimerActor{
-    pub(crate) delay: Duration,
+pub struct TimerActor<T: RateLimit + 'static>{
+    pub delay: Duration,
+    pub store: Arc<T>
 }
 
-impl TimerActor{
-    pub fn start(duration: Duration) -> Addr<Self>{
+impl<T: RateLimit + 'static> TimerActor<T>{
+    pub fn start(duration: Duration, store: Arc<T>) -> Addr<Self>{
         info!("Starting TimerActor...");
-        Supervisor::start(move |_| TimerActor{delay: duration})
+        Supervisor::start(move |_| TimerActor{delay: duration, store: store})
     }
 }
 
-impl Actor for TimerActor{
+impl<T: RateLimit> Actor for TimerActor<T>{
     type Context = Context<Self>;
 
     fn started(&mut self, _: &mut Context<Self>){
@@ -43,7 +40,7 @@ impl Actor for TimerActor{
     }
 }
 
-impl Supervised for TimerActor{
+impl<T: RateLimit> Supervised for TimerActor<T>{
     // TODO Implement better strategy to handle pending updates. At worst case scenario, clear the
     // store
     fn restarting(&mut self, _: &mut Context<Self>){
@@ -51,15 +48,15 @@ impl Supervised for TimerActor{
     }
 }
 
-impl<K, T> Handler<Task<K, T>> for TimerActor
+impl<K, T> Handler<Task<K>> for TimerActor<T>
 where
     K: Into<String> + 'static,
-    T: RateLimit + Send + 'static,
+    T: RateLimit + 'static,
 {
     type Result = ();
-    fn handle(&mut self, msg: Task<K, T>, ctx: &mut Self::Context) -> Self::Result {
-        let _ = ctx.run_later(self.delay, move |_, _| {
-            msg.store.remove(&msg.key.into()).unwrap();
+    fn handle(&mut self, msg: Task<K>, ctx: &mut Self::Context) -> Self::Result {
+        let _ = ctx.run_later(self.delay, |a, _| {
+            a.store.remove(&msg.key.into()).unwrap();
         });
     }
 }

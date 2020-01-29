@@ -3,8 +3,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::marker::Send;
-use std::marker::Sync;
 use std::cell::RefCell;
 use std::future::Future;
 use std::task::{Context, Poll};
@@ -64,8 +62,9 @@ pub trait RateLimit{
 /// type that implements `RateLimit` trait.
 pub struct RateLimiter<T, A>
 where
-    T: RateLimit + Send + 'static,
-    A: Actor + Handler<timers::Task<String, T>>
+    T: RateLimit + 'static,
+    A: Handler<timers::Task<String>>,
+    A::Context: ToEnvelope<A, timers::Task<String>>
 {
     interval: Duration,
     max_requests: usize,
@@ -73,30 +72,34 @@ where
     timer: Option<Addr<A>>
 }
 
-impl Default for RateLimiter<stores::MemoryStore, timers::TimerActor>
+impl Default for RateLimiter<stores::MemoryStore, timers::TimerActor<stores::MemoryStore>>
 {
     fn default() -> Self {
+        let store = Arc::new(stores::MemoryStore::new());
+        let store_clone = store.clone();
         RateLimiter{
             interval: Duration::from_secs(0),
             max_requests: 0,
-            store: Arc::new(stores::MemoryStore::new()),
-            timer: Some(timers::TimerActor::start(Duration::from_secs(0)))
+            store: store,
+            timer: Some(timers::TimerActor::start(Duration::from_secs(0), store_clone))
         }
     }
 }
 
 impl<T, A> RateLimiter<T, A>
 where
-    T: RateLimit + Send + 'static,
-    A: Actor + Handler<timers::Task<String, T>>
+    T: RateLimit + 'static,
+    A: Handler<timers::Task<String>>,
+    A::Context: ToEnvelope<A, timers::Task<String>>
 {
 
     /// Creates a new instance of `RateLimiter`.
     pub fn new(store: T) -> Self {
+        let store = Arc::new(store);
         RateLimiter{
             interval: Duration::from_secs(0),
             max_requests: 0,
-            store: Arc::new(store),
+            store: store,
             timer: None
         }
     }
@@ -123,12 +126,12 @@ where
 
 impl<T: 'static, A, S, B> Transform<S> for RateLimiter<T, A>
 where
-    T: RateLimit + Send + Sync,
-    A: Actor + Handler<timers::Task<String, T>>,
+    T: RateLimit,
+    A: Handler<timers::Task<String>>,
+    A::Context: ToEnvelope<A, timers::Task<String>>,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError>  + 'static,
     S::Future: 'static,
     B: 'static ,
-    <A as Actor>::Context: ToEnvelope<A, timers::Task<std::string::String, T>>,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
@@ -158,8 +161,8 @@ where
 pub struct RateLimitMiddleware<S, T, A>
 where
     S: 'static,
-    T: RateLimit + Send + 'static,
-    A: Actor + Handler<timers::Task<String, T>>,
+    T: RateLimit + 'static,
+    A: Actor + Handler<timers::Task<String>>,
 {
     service: Rc<RefCell<S>>,
     store: Arc<T>,
@@ -171,12 +174,12 @@ where
 
 impl <T, S, B, A> Service for RateLimitMiddleware<S, T, A>
 where
-    T: RateLimit + Send + Sync + 'static,
+    T: RateLimit + 'static,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
-    A: Actor + Handler<timers::Task<String, T>>,
-    <A as Actor>::Context: ToEnvelope<A, timers::Task<std::string::String, T>>,
+    A: Handler<timers::Task<String>>,
+    A::Context: ToEnvelope<A, timers::Task<String>>,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
@@ -191,7 +194,6 @@ where
     fn call(&mut self, req: ServiceRequest) -> Self::Future 
     {
         let store = self.store.clone();
-        let store2 = self.store.clone();
         let mut srv = self.service.clone();
         let max_requests = self.max_requests;
         let interval = Duration::from_secs(self.interval);
@@ -244,7 +246,7 @@ where
                         Some(now.duration_since(UNIX_EPOCH).unwrap() + interval))?;
                     // [TODO]Send a task to delete key after `interval` if Actor is preset
                     if let Some(c) = timer{
-                        let task = timers::Task{key: String::from(identifier), store: store2};
+                        let task = timers::Task{key: String::from(identifier)};
                         c.do_send(task);
                     }
                     let fut = srv.call(req);
@@ -266,7 +268,6 @@ where
                     Ok(res)
                 }
             }
-            // TODO
         })
     }
 }
