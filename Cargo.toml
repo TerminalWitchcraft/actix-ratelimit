@@ -14,10 +14,20 @@ license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+
+default = ["dashmap"]
+
+redis = ["actix-redis", "redis-async"]
+
 [dependencies]
 log = "0.4.8"
 actix-web = "2.0.0"
 actix = "0.9.0"
 futures = "0.3.1"
 failure = "0.1.6"
-dashmap = "3.2.2"
+
+dashmap = {version = "3.2.2", optional = true}
+
+actix-redis = {version = "0.8.0", optional = true}
+redis-async = {version = "0.6.1", optional = true}
