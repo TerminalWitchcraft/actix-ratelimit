@@ -2,6 +2,9 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::marker::Send;
+use std::marker::Sync;
 use std::cell::RefCell;
 use std::future::Future;
 use std::task::{Context, Poll};
@@ -10,6 +13,7 @@ use std::pin::Pin;
 use log::*;
 use futures::future::{ok, Ready};
 use actix::prelude::*;
+use actix::dev::*;
 use actix_web::HttpResponse;
 use actix_web::{
     dev::{ServiceRequest, ServiceResponse, Service, Transform, HttpResponseBuilder},
@@ -60,12 +64,12 @@ pub trait RateLimit{
 /// type that implements `RateLimit` trait.
 pub struct RateLimiter<T, A>
 where
-    T: RateLimit + 'static,
+    T: RateLimit + Send + 'static,
     A: Actor + Handler<timers::Task<String, T>>
 {
     interval: Duration,
     max_requests: usize,
-    store: Rc<RefCell<T>>,
+    store: Arc<T>,
     timer: Option<Addr<A>>
 }
 
@@ -75,7 +79,7 @@ impl Default for RateLimiter<stores::MemoryStore, timers::TimerActor>
         RateLimiter{
             interval: Duration::from_secs(0),
             max_requests: 0,
-            store: Rc::new(RefCell::new(stores::MemoryStore::new())),
+            store: Arc::new(stores::MemoryStore::new()),
             timer: Some(timers::TimerActor::start(Duration::from_secs(0)))
         }
     }
@@ -83,7 +87,7 @@ impl Default for RateLimiter<stores::MemoryStore, timers::TimerActor>
 
 impl<T, A> RateLimiter<T, A>
 where
-    T: RateLimit + 'static,
+    T: RateLimit + Send + 'static,
     A: Actor + Handler<timers::Task<String, T>>
 {
 
@@ -92,7 +96,7 @@ where
         RateLimiter{
             interval: Duration::from_secs(0),
             max_requests: 0,
-            store: Rc::new(RefCell::new(store)),
+            store: Arc::new(store),
             timer: None
         }
     }
@@ -119,66 +123,83 @@ where
 
 impl<T: 'static, A, S, B> Transform<S> for RateLimiter<T, A>
 where
-    T: RateLimit,
+    T: RateLimit + Send + Sync,
     A: Actor + Handler<timers::Task<String, T>>,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError>  + 'static,
     S::Future: 'static,
-    B: 'static,
+    B: 'static ,
+    <A as Actor>::Context: ToEnvelope<A, timers::Task<std::string::String, T>>,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error; 
     type InitError = ();
-    type Transform = RateLimitMiddleware<S, T>;
+    type Transform = RateLimitMiddleware<S, T, A>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
-    fn new_transform(&self, service: S) -> Self::Future {
+    fn new_transform(&self, service: S) -> Self::Future
+    {
+        let timer = match &self.timer{
+            Some(c) => {Some(c.clone())}, 
+            None => None
+        };
         ok(RateLimitMiddleware {
             service: Rc::new(RefCell::new(service)),
             store: self.store.clone(),
             max_requests: self.max_requests,
             interval: self.interval.as_secs(),
+            timer: timer
         })
     }
 }
 
 
 /// Middleware for RateLimiter.
-pub struct RateLimitMiddleware<S, T>
+pub struct RateLimitMiddleware<S, T, A>
 where
     S: 'static,
-    T: RateLimit + 'static,
+    T: RateLimit + Send + 'static,
+    A: Actor + Handler<timers::Task<String, T>>,
 {
     service: Rc<RefCell<S>>,
-    store: Rc<RefCell<T>>,
+    store: Arc<T>,
     // Exists here for the sole purpose of knowing the max_requests and interval from RateLimiter
     max_requests: usize,
     interval: u64,
+    timer: Option<Addr<A>>
 }
 
-impl <T, S, B> Service for RateLimitMiddleware<S, T>
+impl <T, S, B, A> Service for RateLimitMiddleware<S, T, A>
 where
-    T: RateLimit + 'static,
+    T: RateLimit + Send + Sync + 'static,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
+    A: Actor + Handler<timers::Task<String, T>>,
+    <A as Actor>::Context: ToEnvelope<A, timers::Task<std::string::String, T>>,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error; 
     type Future = Pin<Box<dyn Future<Output=Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> 
+    {
         self.service.borrow_mut().poll_ready(cx)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
-        let store_clone = self.store.clone();
+    fn call(&mut self, req: ServiceRequest) -> Self::Future 
+    {
+        let store = self.store.clone();
+        let store2 = self.store.clone();
         let mut srv = self.service.clone();
         let max_requests = self.max_requests;
         let interval = Duration::from_secs(self.interval);
+        let timer = match &self.timer{
+            Some(c) => Some(c.clone()),
+            None => None
+        };
         Box::pin(async move {
-            let store = store_clone.borrow();
             let identifier: String = store.client_identifier(&req)?;
             let remaining: Option<usize> = store.get(&identifier)?;
             match remaining{
@@ -219,13 +240,13 @@ where
                 // New client, create entry in store
                 None => {
                     let now = SystemTime::now();
-                    store.set(identifier, max_requests,
+                    store.set(String::from(&identifier), max_requests,
                         Some(now.duration_since(UNIX_EPOCH).unwrap() + interval))?;
                     // [TODO]Send a task to delete key after `interval` if Actor is preset
-                    // if let Some(c) = timer{
-                    //     let task = timers::Task{key: identifier, store: store}
-                    //     c.send()
-                    // };
+                    if let Some(c) = timer{
+                        let task = timers::Task{key: String::from(identifier), store: store2};
+                        c.do_send(task);
+                    }
                     let fut = srv.call(req);
                     let mut res = fut.await?;
                     let headers = res.headers_mut();
