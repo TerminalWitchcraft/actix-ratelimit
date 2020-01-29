@@ -1,26 +1,27 @@
 use log::*;
 use std::time::Duration;
+use std::marker::Send;
+use std::sync::Arc;
 use actix::Actor;
 use actix::prelude::*;
-use actix_web::Error as AWError;
 
 use crate::RateLimit;
 
 pub struct Task<K, T>
 where
     K: Into<String> + 'static,
-    T: RateLimit + 'static,
+    T: RateLimit + Send + 'static,
 {
-    key: K,
-    store: T
+    pub key: K,
+    pub store: Arc<T>
 }
 
 impl<K, T> Message for Task<K, T>
 where
     K: Into<String> + 'static,
-    T: RateLimit + 'static,
+    T: RateLimit + Send + 'static,
 {
-    type Result = Result<(), AWError>;
+    type Result = ();
 }
 
 pub(crate) struct TimerActor{
@@ -53,13 +54,12 @@ impl Supervised for TimerActor{
 impl<K, T> Handler<Task<K, T>> for TimerActor
 where
     K: Into<String> + 'static,
-    T: RateLimit + 'static,
+    T: RateLimit + Send + 'static,
 {
-    type Result = Result<(), AWError>;
+    type Result = ();
     fn handle(&mut self, msg: Task<K, T>, ctx: &mut Self::Context) -> Self::Result {
         let _ = ctx.run_later(self.delay, move |_, _| {
             msg.store.remove(&msg.key.into()).unwrap();
         });
-        Ok(())
     }
 }
