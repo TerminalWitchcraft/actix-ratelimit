@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dashmap::DashMap;
+use async_trait::async_trait;
 use actix_web::dev::ServiceRequest;
 use actix_web::Error as AWError;
 use actix_web::web::HttpResponse;
@@ -26,6 +27,7 @@ impl MemoryStore
     }
 }
 
+#[async_trait]
 impl RateLimit for MemoryStore
 {
     fn client_identifier(&self, req: &ServiceRequest) -> Result<String, AWError> {
@@ -33,7 +35,7 @@ impl RateLimit for MemoryStore
         Ok(soc_addr.ip().to_string())
     }
 
-    fn get(&self, key: &str) -> Result<Option<usize>, AWError> {
+    async fn get(&self, key: &str) -> Result<Option<usize>, AWError> {
         if self.inner.contains_key(key){
             let val = self.inner.get(key).unwrap();
             let val = val.value().0;
@@ -43,7 +45,7 @@ impl RateLimit for MemoryStore
         }
     }
 
-    fn set(&self, key: String, val: usize, expiry: Option<Duration>) -> Result<(), AWError> {
+    async fn set(&self, key: String, val: usize, expiry: Option<Duration>) -> Result<(), AWError> {
         if let Some(c) = expiry{
             // New entry, sets the key
             self.inner.insert(key, (val, c)).unwrap();
@@ -57,7 +59,7 @@ impl RateLimit for MemoryStore
         Ok(())
     }
 
-    fn expire(&self, key: &str) -> Result<Duration, AWError> {
+    async fn expire(&self, key: &str) -> Result<Duration, AWError> {
         match self.inner.get(key){
             Some(c) => {
                 let dur = c.value().1;
@@ -71,7 +73,7 @@ impl RateLimit for MemoryStore
         }
     }
 
-    fn remove(&self, key: &str) -> Result<usize, AWError> {
+    async fn remove(&self, key: &str) -> Result<usize, AWError> {
         let val = self.inner.remove::<String>(&key.to_string()).unwrap();
         let val = val.1;
         Ok(val.0)

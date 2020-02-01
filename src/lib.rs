@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 use std::pin::Pin;
 
 use log::*;
+use async_trait::async_trait;
 use futures::future::{ok, Ready};
 use actix::prelude::*;
 use actix::dev::*;
@@ -23,6 +24,7 @@ mod timers;
 mod stores;
 
 /// Trait that implements functions required for buidling a RateLimiter.
+#[async_trait]
 pub trait RateLimit{
 
     /// Get the identifier use to identify a request. Identifiers are used to identify a client. You can use
@@ -34,16 +36,16 @@ pub trait RateLimit{
     /// Get the remaining number of accesses based on `key`. Here, `key` is used as the identifier
     /// returned by `get_identifier` function. This functions queries the `store` to get the
     /// reamining number of accesses.
-    fn get(&self, key: &str) -> Result<Option<usize>, AWError>;
+    async fn get(&self, key: &str) -> Result<Option<usize>, AWError>;
 
     /// Sets the access count for the client identified by key to a value `value`. Again, key is
     /// the identifier returned by `get_identifier` function.
-    fn set(&self, key: String, value: usize, expiry: Option<Duration>) -> Result<(), AWError>;
+    async fn set(&self, key: String, value: usize, expiry: Option<Duration>) -> Result<(), AWError>;
 
     /// Get the expiry for the given key
-    fn expire(&self, key: &str) -> Result<Duration, AWError>;
+    async fn expire(&self, key: &str) -> Result<Duration, AWError>;
 
-    fn remove(&self, key: &str) -> Result<usize, AWError>;
+    async fn remove(&self, key: &str) -> Result<usize, AWError>;
 
     /// Callback to execute after each processing of the middleware. You can add your custom
     /// implementation according to your needs. For example, if you want to log client which used
@@ -203,11 +205,11 @@ where
         };
         Box::pin(async move {
             let identifier: String = store.client_identifier(&req)?;
-            let remaining: Option<usize> = store.get(&identifier)?;
+            let remaining: Option<usize> = store.get(&identifier).await?;
             match remaining{
                 // Existing entry in store
                 Some(c) => {
-                    let reset = store.expire(&identifier)?;
+                    let reset = store.expire(&identifier).await?;
                     if c == 0 {
                         info!("Limit exceeded for client: {}", &identifier);
                         let response = HttpResponse::TooManyRequests();
@@ -219,7 +221,7 @@ where
                     } else {
                         // Execute the req
                         // Decrement value
-                        store.set(identifier, c + 1, None)?;
+                        store.set(identifier, c + 1, None).await?;
                         let fut = srv.call(req);
                         let mut res = fut.await?;
                         let headers = res.headers_mut();
@@ -243,7 +245,7 @@ where
                 None => {
                     let now = SystemTime::now();
                     store.set(String::from(&identifier), max_requests,
-                        Some(now.duration_since(UNIX_EPOCH).unwrap() + interval))?;
+                        Some(now.duration_since(UNIX_EPOCH).unwrap() + interval)).await?;
                     // [TODO]Send a task to delete key after `interval` if Actor is preset
                     if let Some(c) = timer{
                         let task = timers::Task{key: String::from(identifier)};

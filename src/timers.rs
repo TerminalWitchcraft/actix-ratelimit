@@ -56,7 +56,7 @@ where
     type Result = ();
     fn handle(&mut self, msg: Task<K>, ctx: &mut Self::Context) -> Self::Result {
         let _ = ctx.run_later(self.delay, |a, _| {
-            a.store.remove(&msg.key.into()).unwrap();
+            a.store.remove(&msg.key.into());
         });
     }
 }
