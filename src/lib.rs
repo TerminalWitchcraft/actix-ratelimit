@@ -11,56 +11,18 @@ use std::ops::Fn;
 use std::pin::Pin;
 
 use log::*;
-use async_trait::async_trait;
 use futures::future::{ok, Ready};
 use actix::prelude::*;
 use actix::dev::*;
 use actix_web::HttpResponse;
 use actix_web::{
-    dev::{ServiceRequest, ServiceResponse, Service, Transform, HttpResponseBuilder},
+    dev::{ServiceRequest, ServiceResponse, Service, Transform},
     error::Error as AWError,
     http::{HeaderName, HeaderValue},
 };
 
 // mod timers;
 mod stores;
-
-/// Trait that implements functions required for buidling a RateLimiter.
-#[async_trait]
-pub trait RateLimit{
-    type Identifier: Fn(&ServiceRequest) -> String + 'static; 
-    type ErrorCallback: Fn(&mut HttpResponseBuilder) -> HttpResponseBuilder + 'static;
-
-    // /// Get the identifier use to identify a request. Identifiers are used to identify a client. You can use
-    // /// the `ServiceRequest` parameter to
-    // /// extract one, or you could use your own identifier from different source.  Most commonly
-    // /// used identifiers are IP address, cookies, cached data, etc
-    // fn client_identifier(&self, req: &ServiceRequest) -> Result<String, AWError>;
-
-    // /// Get the remaining number of accesses based on `key`. Here, `key` is used as the identifier
-    // /// returned by `get_identifier` function. This functions queries the `store` to get the
-    // /// reamining number of accesses.
-    // async fn get(&self, key: &str) -> Result<Option<usize>, AWError>;
-    //
-    // /// Sets the access count for the client identified by key to a value `value`. Again, key is
-    // /// the identifier returned by `get_identifier` function.
-    // async fn set(&self, key: String, value: usize, expiry: Option<Duration>) -> Result<(), AWError>;
-    //
-    // /// Get the expiry for the given key
-    // async fn expire(&self, key: &str) -> Result<Duration, AWError>;
-    //
-    // async fn remove(&self, key: &str) -> Result<usize, AWError>;
-
-    // /// Callback to execute after each processing of the middleware. You can add your custom
-    // /// implementation according to your needs. For example, if you want to log client which used
-    // /// 95% of the quota, you could do so by:
-    // #[allow(unused_mut)]
-    // fn error_callback(&self, mut response: HttpResponseBuilder) -> HttpResponseBuilder {
-    //     response
-    // }
-
-}
-
 
 pub enum Messages{
     Get(String),
@@ -73,12 +35,12 @@ impl Message for Messages{
     type Result = Responses;
 }
 
-type ResponseOut<T> = Pin<Box<dyn Future<Output=T> + Send>>;
+type ResponseOut<T> = Pin<Box<dyn Future<Output=Result<T, IOError>> + Send>>;
 pub enum Responses{
-    Get(ResponseOut<Result<Option<usize>, IOError>>),
-    Set(ResponseOut<Result<(), IOError>>),
-    Expire(ResponseOut<Result<Duration, IOError>>),
-    Remove(ResponseOut<Result<usize, IOError>>),
+    Get(ResponseOut<Option<usize>>),
+    Set(ResponseOut<()>),
+    Expire(ResponseOut<Duration>),
+    Remove(ResponseOut<usize>),
 }
 
 impl<A, M> MessageResponse<A, M> for Responses
