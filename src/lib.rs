@@ -77,7 +77,7 @@ where
 
 impl Default for RateLimiter<stores::MemoryStore> {
     fn default() -> Self {
-        let store = stores::MemoryStore::new();
+        let store = stores::MemoryStore::default();
         let identifier = |req: &ServiceRequest| {
             let soc_addr = req.peer_addr().unwrap();
             soc_addr.ip().to_string()

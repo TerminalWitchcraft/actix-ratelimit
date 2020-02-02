@@ -11,12 +11,15 @@ pub struct MemoryStore {
     inner: DashMap<String, (usize, Duration)>,
 }
 
-impl MemoryStore {
-    pub fn new() -> Self {
-        MemoryStore {
-            inner: DashMap::<String, (usize, Duration)>::new(),
+impl Default for MemoryStore{
+    fn default() -> Self{
+        MemoryStore{
+            inner: DashMap::<String, (usize, Duration)>::new()
         }
     }
+}
+
+impl MemoryStore {
 
     pub fn with_capaticity(capacity: usize) -> Self {
         MemoryStore {
