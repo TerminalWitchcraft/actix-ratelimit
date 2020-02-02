@@ -2,6 +2,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::rc::Rc;
+use std::io::Error as IOError;
 use std::marker::Send;
 use std::cell::RefCell;
 use std::future::Future;
@@ -72,11 +73,12 @@ impl Message for Messages{
     type Result = Responses;
 }
 
+type ResponseOut<T> = Pin<Box<dyn Future<Output=T> + Send>>;
 pub enum Responses{
-    Get(Pin<Box<dyn Future<Output=Option<usize>> + Send>>),
-    Set(Pin<Box<dyn Future<Output=()> + Send>>),
-    Expire(Pin<Box<dyn Future<Output=Duration> + Send>>),
-    Remove(Pin<Box<dyn Future<Output=usize> + Send>>),
+    Get(ResponseOut<Result<Option<usize>, IOError>>),
+    Set(ResponseOut<Result<(), IOError>>),
+    Expire(ResponseOut<Result<Duration, IOError>>),
+    Remove(ResponseOut<Result<usize, IOError>>),
 }
 
 impl<A, M> MessageResponse<A, M> for Responses
@@ -228,29 +230,57 @@ where
             let identifier: String = (get_identifier)(&req);
             let remaining: Responses = store.send(Messages::Get(String::from(&identifier))).await?;
             match remaining{
-                // Existing entry in store
-                Responses::Get(c) => {
-                    let c:usize = c.await.unwrap();
-                    let expiry = store.send(Messages::Expire(String::from(&identifier))).await?;
-                    let reset: Duration = match expiry {
-                        Responses::Expire(dur) => dur.await,
-                        _ => {
-                            let now = SystemTime::now();
-                            now.duration_since(UNIX_EPOCH).unwrap() + interval
+                Responses::Get(opt) => {
+                    let opt = opt.await?;
+                    if let Some(c) = opt{
+                        // Existing entry in store
+                        let expiry = store.send(Messages::Expire(String::from(&identifier))).await?;
+                        let reset: Duration = match expiry {
+                            Responses::Expire(dur) => dur.await?,
+                            _ => {
+                                let now = SystemTime::now();
+                                now.duration_since(UNIX_EPOCH).unwrap() + interval
+                            }
+                        };
+                        if c == 0 {
+                            info!("Limit exceeded for client: {}", &identifier);
+                            let mut response = HttpResponse::TooManyRequests();
+                            // let mut response = (error_callback)(&mut response);
+                            response.set_header("x-ratelimit-limit", max_requests.to_string());
+                            response.set_header("x-ratelimit-remaining", c.to_string());
+                            response.set_header("x-ratelimit-reset", reset.as_secs().to_string());
+                            Err(response.into())
+                        } else {
+                            // Execute the req
+                            // Decrement value
+                            store.send(Messages::Set{key: identifier, value: c + 1, expiry: None}).await?;
+                            let fut = srv.call(req);
+                            let mut res = fut.await?;
+                            let headers = res.headers_mut();
+                            // Safe unwraps, since usize is always convertible to string
+                            headers.insert(
+                                HeaderName::from_static("x-ratelimit-limit"),
+                                HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                            );
+                            headers.insert(
+                                HeaderName::from_static("x-ratelimit-remaining"),
+                                HeaderValue::from_str(c.to_string().as_str()).unwrap(),
+                            );
+                            headers.insert(
+                                HeaderName::from_static("x-ratelimit-reset"),
+                                HeaderValue::from_str(reset.as_secs().to_string().as_str()).unwrap(),
+                            );
+                            Ok(res)
                         }
-                    };
-                    if c == 0 {
-                        info!("Limit exceeded for client: {}", &identifier);
-                        let mut response = HttpResponse::TooManyRequests();
-                        // let mut response = (error_callback)(&mut response);
-                        response.set_header("x-ratelimit-limit", max_requests.to_string());
-                        response.set_header("x-ratelimit-remaining", c.to_string());
-                        response.set_header("x-ratelimit-reset", reset.as_secs().to_string());
-                        Err(response.into())
                     } else {
-                        // Execute the req
-                        // Decrement value
-                        store.send(Messages::Set{key: identifier, value: c + 1, expiry: None}).await?;
+                        // New client, create entry in store
+                        let now = SystemTime::now();
+                        store.send(Messages::Set{
+                            key: String::from(&identifier),
+                            value: max_requests,
+                            expiry: Some(now.duration_since(UNIX_EPOCH).unwrap() + interval)
+                        }).await?;
+                        // [TODO]Send a task to delete key after `interval` if Actor is preset
                         let fut = srv.call(req);
                         let mut res = fut.await?;
                         let headers = res.headers_mut();
@@ -261,41 +291,17 @@ where
                         );
                         headers.insert(
                             HeaderName::from_static("x-ratelimit-remaining"),
-                            HeaderValue::from_str(c.to_string().as_str()).unwrap(),
+                            HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
                         );
                         headers.insert(
                             HeaderName::from_static("x-ratelimit-reset"),
-                            HeaderValue::from_str(reset.as_secs().to_string().as_str()).unwrap(),
+                            HeaderValue::from_str(interval.as_secs().to_string().as_str()).unwrap(),
                         );
                         Ok(res)
-                    }
+                        }
                 },
-                // New client, create entry in store
                 _ => {
-                    let now = SystemTime::now();
-                    store.send(Messages::Set{
-                        key: String::from(&identifier),
-                        value: max_requests,
-                        expiry: Some(now.duration_since(UNIX_EPOCH).unwrap() + interval)
-                    }).await?;
-                    // [TODO]Send a task to delete key after `interval` if Actor is preset
-                    let fut = srv.call(req);
-                    let mut res = fut.await?;
-                    let headers = res.headers_mut();
-                    // Safe unwraps, since usize is always convertible to string
-                    headers.insert(
-                        HeaderName::from_static("x-ratelimit-limit"),
-                        HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
-                    );
-                    headers.insert(
-                        HeaderName::from_static("x-ratelimit-remaining"),
-                        HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
-                    );
-                    headers.insert(
-                        HeaderName::from_static("x-ratelimit-reset"),
-                        HeaderValue::from_str(interval.as_secs().to_string().as_str()).unwrap(),
-                    );
-                    Ok(res)
+                    unreachable!();
                 }
             }
         })

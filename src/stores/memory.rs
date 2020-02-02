@@ -1,12 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use actix::prelude::*;
 use dashmap::DashMap;
-use futures::future::{self, Future};
-use std::pin::Pin;
-use async_trait::async_trait;
-use actix_web::dev::ServiceRequest;
-use actix_web::Error as AWError;
-use actix_web::web::HttpResponse;
+use futures::future::{self};
 
 use crate::{Messages, Responses};
 
@@ -52,17 +47,16 @@ impl Handler<Messages> for MemoryStore {
                     let new_data = (value, expire);
                     self.inner.insert(key, new_data).unwrap();
                 }
-                let fut = future::ready(());
+                let fut = future::ready(Ok(()));
                 Responses::Set(Box::pin(fut))
             },
             Messages::Get(key) => {
                 if self.inner.contains_key(&key) {
                     let val = self.inner.get(&key).unwrap();
                     let val = val.value().0;
-                    Responses::Get(Box::pin(future::ready(Some(val))))
-                    // Responses::Get(Pin::new(Box::new(future::ready(Some(val)))))
+                    Responses::Get(Box::pin(future::ready(Ok(Some(val)))))
                 } else {
-                    Responses::Get(Box::pin(future::ready(None)))
+                    Responses::Get(Box::pin(future::ready(Ok(None))))
                 }
             },
             Messages::Expire(key) => {
@@ -70,12 +64,12 @@ impl Handler<Messages> for MemoryStore {
                 let dur = c.value().1;
                 let now = SystemTime::now();
                 let dur = dur - now.duration_since(UNIX_EPOCH).unwrap();
-                Responses::Expire(Box::pin(future::ready(dur)))
+                Responses::Expire(Box::pin(future::ready(Ok(dur))))
             },
             Messages::Remove(key) => {
                 let val = self.inner.remove::<String>(&key).unwrap();
                 let val = val.1;
-                Responses::Remove(Box::pin(future::ready(val.0)))
+                Responses::Remove(Box::pin(future::ready(Ok(val.0))))
             }
         }
     }
