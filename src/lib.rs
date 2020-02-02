@@ -244,13 +244,12 @@ where
                         }
                     } else {
                         // New client, create entry in store
-                        let now = SystemTime::now();
                         store
                             .send(Messages::Set {
                                 key: String::from(&identifier),
                                 value: max_requests,
                                 change: 0,
-                                expiry: Some(now.duration_since(UNIX_EPOCH).unwrap() + interval),
+                                expiry: Some(interval),
                             })
                             .await?;
                         // [TODO]Send a task to delete key after `interval` if Actor is preset

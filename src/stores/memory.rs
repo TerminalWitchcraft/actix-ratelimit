@@ -54,14 +54,7 @@ impl Handler<Messages> for MemoryStore {
             } => {
                 if let Some(dur) = expiry {
                     let future_key = String::from(&key);
-                    match self.inner.insert(key, (value + change, dur)) {
-                        Some(_) => {},
-                        None => return Responses::Set(
-                            Box::pin(future::ready(
-                                    Err(ARError::ReadWriteError("memory store: insert failed!".to_string()))
-                            )
-                        ))
-                    };
+                    self.inner.insert(key, (value - change, dur));
                     ctx.run_later(dur, move |a, _| {
                         a.inner.remove(&future_key);
                     });
@@ -132,3 +125,138 @@ impl Handler<Messages> for MemoryStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+
+    #[actix_rt::test]
+    async fn test_set() {
+        let addr = MemoryStore::default().start();
+        let res = addr.send(Messages::Set{
+            key: "hello".to_string(),
+            value: 30usize,
+            change: 0,
+            expiry: None
+        }).await;
+        let res = res.expect("Failed to send msg");
+        match res{
+            Responses::Set(c) => {
+                match c.await {
+                    Ok(()) => panic!("Shouldn't happen"),
+                    Err(_) => {}
+                }
+            },
+            _ => panic!("Shouldn't happen!")
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_set_ex() {
+        env_logger::init();
+        let addr = MemoryStore::default().start();
+        let expiry = SystemTime::now();
+        let expiry = expiry.duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(5);
+        let res = addr.send(Messages::Set{
+            key: "hello".to_string(),
+            value: 30usize,
+            change: 0,
+            expiry: Some(expiry)
+        }).await;
+        let res = res.expect("Failed to send msg");
+        match res{
+            Responses::Set(c) => {
+                match c.await {
+                    Ok(()) => {},
+                    Err(e) => panic!("Shouldn't happen {}", &e)
+                }
+            },
+            _ => panic!("Shouldn't happen!")
+        }
+    }
+
+
+    #[actix_rt::test]
+    async fn test_get() {
+        let addr = MemoryStore::default().start();
+        let expiry = SystemTime::now();
+        let expiry = expiry.duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(5);
+        let res = addr.send(Messages::Set{
+            key: "hello".to_string(),
+            value: 30usize,
+            change: 0,
+            expiry: Some(expiry)
+        }).await;
+        let res = res.expect("Failed to send msg");
+        match res{
+            Responses::Set(c) => {
+                match c.await {
+                    Ok(()) => {},
+                    Err(e) => panic!("Shouldn't happen {}", &e)
+                }
+            },
+            _ => panic!("Shouldn't happen!")
+        }
+        let res2 = addr.send(Messages::Get("hello".to_string())).await;
+        let res2 = res2.expect("Failed to send msg");
+        match res2{
+            Responses::Get(c) => {
+                match c.await{
+                    Ok(d) => {
+                        let d = d.unwrap();
+                        assert_eq!(d, 30usize);
+                    },
+                    Err(e) => panic!("Shouldn't happen {}", &e),
+                }
+            },
+            _ => panic!("Shouldn't happen!")
+        };
+    }
+
+    #[actix_rt::test]
+    async fn test_expiry() {
+        let addr = MemoryStore::default().start();
+        let expiry = SystemTime::now();
+        let expiry = expiry.duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(3);
+        let res = addr.send(Messages::Set{
+            key: "hello".to_string(),
+            value: 30usize,
+            change: 0,
+            expiry: Some(expiry)
+        }).await;
+        let res = res.expect("Failed to send msg");
+        match res{
+            Responses::Set(c) => {
+                match c.await {
+                    Ok(()) => {},
+                    Err(e) => panic!("Shouldn't happen {}", &e)
+                }
+            },
+            _ => panic!("Shouldn't happen!")
+        }
+        assert_eq!(addr.connected(), true);
+
+        let res3 = addr.send(Messages::Expire("hello".to_string())).await;
+        let res3 = res3.expect("Failed to send msg");
+        match res3{
+            Responses::Expire(c) => {
+                match c.await{
+                    Ok(dur) => {
+                        let now = SystemTime::now();
+                        let now = now.duration_since(UNIX_EPOCH).unwrap();
+                        if dur >= now{
+                            if dur > now + Duration::from_secs(4){
+                                panic!("Expiry is invalid!");
+                            }
+                        } else if dur > now + Duration::from_secs(4) {
+                            panic!("Expiry is invalid!");
+                        }
+                    },
+                    Err(e) => {panic!("Shouldn't happen: {}", &e);}
+                }
+            },
+            _ => panic!("Shouldn't happen!")
+        };
+    }
+}
+

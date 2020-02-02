@@ -30,3 +30,7 @@ dashmap = {version = "3.2.2", optional = true}
 
 redis_rs = {version = "0.15.1", optional = true, package= "redis"}
 backoff = {version = "0.1.6", optional = true}
+
+[dev-dependencies]
+actix-rt = "1.0.0"
+env_logger = "0.7.1"
