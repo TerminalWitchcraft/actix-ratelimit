@@ -1,42 +1,47 @@
 //! Rate limiting middleware framework for actix-web
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::rc::Rc;
-use std::io::Error as IOError;
-use std::marker::Send;
 use std::cell::RefCell;
 use std::future::Future;
-use std::task::{Context, Poll};
+use std::marker::Send;
 use std::ops::Fn;
 use std::pin::Pin;
+use std::rc::Rc;
+use std::task::{Context, Poll};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use log::*;
-use futures::future::{ok, Ready};
-use actix::prelude::*;
 use actix::dev::*;
 use actix_web::HttpResponse;
 use actix_web::{
-    dev::{ServiceRequest, ServiceResponse, Service, Transform},
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
     error::Error as AWError,
     http::{HeaderName, HeaderValue},
 };
+use futures::future::{ok, Ready};
+use log::*;
 
 // mod timers;
+mod errors;
 mod stores;
+use errors::ARError;
 
-pub enum Messages{
+pub enum Messages {
     Get(String),
-    Set {key: String, value: usize, expiry: Option<Duration>},
+    Set {
+        key: String,
+        value: usize,
+        change: usize,
+        expiry: Option<Duration>,
+    },
     Expire(String),
-    Remove(String)
+    Remove(String),
 }
 
-impl Message for Messages{
+impl Message for Messages {
     type Result = Responses;
 }
 
-type ResponseOut<T> = Pin<Box<dyn Future<Output=Result<T, IOError>> + Send>>;
-pub enum Responses{
+type ResponseOut<T> = Pin<Box<dyn Future<Output = Result<T, ARError>> + Send>>;
+pub enum Responses {
     Get(ResponseOut<Option<usize>>),
     Set(ResponseOut<()>),
     Expire(ResponseOut<Duration>),
@@ -62,27 +67,26 @@ where
 pub struct RateLimiter<T>
 where
     T: Handler<Messages> + 'static,
-    T::Context: ToEnvelope<T, Messages>
+    T::Context: ToEnvelope<T, Messages>,
 {
     interval: Duration,
     max_requests: usize,
     store: Rc<Addr<T>>,
-    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String>>
+    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String>>,
 }
 
-impl Default for RateLimiter<stores::MemoryStore>
-{
+impl Default for RateLimiter<stores::MemoryStore> {
     fn default() -> Self {
         let store = stores::MemoryStore::new();
         let identifier = |req: &ServiceRequest| {
             let soc_addr = req.peer_addr().unwrap();
             soc_addr.ip().to_string()
         };
-        RateLimiter{
+        RateLimiter {
             interval: Duration::from_secs(0),
             max_requests: 0,
             store: Rc::new(store.start()),
-            identifier: Rc::new(Box::new(identifier))
+            identifier: Rc::new(Box::new(identifier)),
         }
     }
 }
@@ -90,20 +94,19 @@ impl Default for RateLimiter<stores::MemoryStore>
 impl<T> RateLimiter<T>
 where
     T: Handler<Messages> + 'static,
-    <T as Actor>::Context: ToEnvelope<T, Messages>
+    <T as Actor>::Context: ToEnvelope<T, Messages>,
 {
-
     /// Creates a new instance of `RateLimiter`.
     pub fn new(store: Addr<T>) -> Self {
         let identifier = |req: &ServiceRequest| {
             let soc_addr = req.peer_addr().unwrap();
             soc_addr.ip().to_string()
         };
-        RateLimiter{
+        RateLimiter {
             interval: Duration::from_secs(0),
             max_requests: 0,
             store: Rc::new(store),
-            identifier: Rc::new(Box::new(identifier))
+            identifier: Rc::new(Box::new(identifier)),
         }
     }
 
@@ -118,26 +121,24 @@ where
         self.max_requests = max_requests;
         self
     }
-
 }
 
 impl<T, S, B> Transform<S> for RateLimiter<T>
 where
     T: Handler<Messages> + 'static,
     T::Context: ToEnvelope<T, Messages>,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError>  + 'static,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
-    B: 'static ,
+    B: 'static,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
-    type Error = S::Error; 
+    type Error = S::Error;
     type InitError = ();
     type Transform = RateLimitMiddleware<S, T>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
-    fn new_transform(&self, service: S) -> Self::Future
-    {
+    fn new_transform(&self, service: S) -> Self::Future {
         ok(RateLimitMiddleware {
             service: Rc::new(RefCell::new(service)),
             store: self.store.clone(),
@@ -147,7 +148,6 @@ where
         })
     }
 }
-
 
 /// Middleware for RateLimiter.
 pub struct RateLimitMiddleware<S, T>
@@ -163,7 +163,7 @@ where
     get_identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String + 'static>>,
 }
 
-impl <T, S, B> Service for RateLimitMiddleware<S, T>
+impl<T, S, B> Service for RateLimitMiddleware<S, T>
 where
     T: Handler<Messages> + 'static,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
@@ -173,16 +173,14 @@ where
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
-    type Error = S::Error; 
-    type Future = Pin<Box<dyn Future<Output=Result<Self::Response, Self::Error>>>>;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> 
-    {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.borrow_mut().poll_ready(cx)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future 
-    {
+    fn call(&mut self, req: ServiceRequest) -> Self::Future {
         let store = self.store.clone();
         let mut srv = self.service.clone();
         let max_requests = self.max_requests;
@@ -191,12 +189,14 @@ where
         Box::pin(async move {
             let identifier: String = (get_identifier)(&req);
             let remaining: Responses = store.send(Messages::Get(String::from(&identifier))).await?;
-            match remaining{
+            match remaining {
                 Responses::Get(opt) => {
                     let opt = opt.await?;
-                    if let Some(c) = opt{
+                    if let Some(c) = opt {
                         // Existing entry in store
-                        let expiry = store.send(Messages::Expire(String::from(&identifier))).await?;
+                        let expiry = store
+                            .send(Messages::Expire(String::from(&identifier)))
+                            .await?;
                         let reset: Duration = match expiry {
                             Responses::Expire(dur) => dur.await?,
                             _ => {
@@ -215,7 +215,14 @@ where
                         } else {
                             // Execute the req
                             // Decrement value
-                            store.send(Messages::Set{key: identifier, value: c + 1, expiry: None}).await?;
+                            store
+                                .send(Messages::Set {
+                                    key: identifier,
+                                    value: c,
+                                    change: 1,
+                                    expiry: None,
+                                })
+                                .await?;
                             let fut = srv.call(req);
                             let mut res = fut.await?;
                             let headers = res.headers_mut();
@@ -230,18 +237,22 @@ where
                             );
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-reset"),
-                                HeaderValue::from_str(reset.as_secs().to_string().as_str()).unwrap(),
+                                HeaderValue::from_str(reset.as_secs().to_string().as_str())
+                                    .unwrap(),
                             );
                             Ok(res)
                         }
                     } else {
                         // New client, create entry in store
                         let now = SystemTime::now();
-                        store.send(Messages::Set{
-                            key: String::from(&identifier),
-                            value: max_requests,
-                            expiry: Some(now.duration_since(UNIX_EPOCH).unwrap() + interval)
-                        }).await?;
+                        store
+                            .send(Messages::Set {
+                                key: String::from(&identifier),
+                                value: max_requests,
+                                change: 0,
+                                expiry: Some(now.duration_since(UNIX_EPOCH).unwrap() + interval),
+                            })
+                            .await?;
                         // [TODO]Send a task to delete key after `interval` if Actor is preset
                         let fut = srv.call(req);
                         let mut res = fut.await?;
@@ -260,8 +271,8 @@ where
                             HeaderValue::from_str(interval.as_secs().to_string().as_str()).unwrap(),
                         );
                         Ok(res)
-                        }
-                },
+                    }
+                }
                 _ => {
                     unreachable!();
                 }
