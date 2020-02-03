@@ -7,7 +7,7 @@ use std::ops::Fn;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use actix::dev::*;
 use actix_web::HttpResponse;
@@ -29,8 +29,11 @@ pub enum Messages {
     Set {
         key: String,
         value: usize,
-        change: usize,
-        expiry: Option<Duration>,
+        expiry: Duration,
+    },
+    Update {
+        key: String,
+        value: usize,
     },
     Expire(String),
     Remove(String),
@@ -44,6 +47,7 @@ type ResponseOut<T> = Pin<Box<dyn Future<Output = Result<T, ARError>> + Send>>;
 pub enum Responses {
     Get(ResponseOut<Option<usize>>),
     Set(ResponseOut<()>),
+    Update(ResponseOut<usize>),
     Expire(ResponseOut<Duration>),
     Remove(ResponseOut<usize>),
 }
@@ -199,10 +203,7 @@ where
                             .await?;
                         let reset: Duration = match expiry {
                             Responses::Expire(dur) => dur.await?,
-                            _ => {
-                                let now = SystemTime::now();
-                                now.duration_since(UNIX_EPOCH).unwrap() + interval
-                            }
+                            _ => unreachable!(),
                         };
                         if c == 0 {
                             info!("Limit exceeded for client: {}", &identifier);
@@ -216,11 +217,9 @@ where
                             // Execute the req
                             // Decrement value
                             store
-                                .send(Messages::Set {
+                                .send(Messages::Update {
                                     key: identifier,
-                                    value: c,
-                                    change: 1,
-                                    expiry: None,
+                                    value: 1,
                                 })
                                 .await?;
                             let fut = srv.call(req);
@@ -248,11 +247,9 @@ where
                             .send(Messages::Set {
                                 key: String::from(&identifier),
                                 value: max_requests,
-                                change: 0,
-                                expiry: Some(interval),
+                                expiry: interval,
                             })
                             .await?;
-                        // [TODO]Send a task to delete key after `interval` if Actor is preset
                         let fut = srv.call(req);
                         let mut res = fut.await?;
                         let headers = res.headers_mut();

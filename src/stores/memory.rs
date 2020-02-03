@@ -49,35 +49,32 @@ impl Handler<Messages> for MemoryStore {
             Messages::Set {
                 key,
                 value,
-                change,
                 expiry,
             } => {
-                if let Some(dur) = expiry {
-                    let future_key = String::from(&key);
-                    self.inner.insert(key, (value - change, dur));
-                    ctx.notify_later(Messages::Remove(future_key), dur);
-                } else {
-                    let data = match self.inner.get(&key){
-                        Some(c) => c,
-                        None => return Responses::Set(
-                            Box::pin(future::ready(
-                                    Err(ARError::ReadWriteError("memory store: read failed".to_string()))
-                            ))
-                        )
-                    };
-                    let expire = data.value().1;
-                    let new_data = (value, expire);
-                    match self.inner.insert(key, new_data){
-                        Some(_) => {},
-                        None => return Responses::Set(
-                            Box::pin(future::ready(
-                                    Err(ARError::ReadWriteError("memory store: insert failed!".to_string()))
-                            )
-                        ))
-                    };
-                }
+                let future_key = String::from(&key);
+                let now = SystemTime::now();
+                let now = now.duration_since(UNIX_EPOCH).unwrap();
+                self.inner.insert(key, (value, now + expiry));
+                ctx.notify_later(Messages::Remove(future_key), expiry);
                 Responses::Set(Box::pin(future::ready(Ok(()))))
-            }
+            },
+            Messages::Update {key, value} => {
+                match self.inner.get_mut(&key) {
+                    Some(mut c) => {
+                        let val_mut: &mut (usize, Duration) = c.value_mut();
+                        val_mut.0 -= value;
+                        let new_val = val_mut.0;
+                        Responses::Update(Box::pin(future::ready(
+                                Ok(new_val)
+                        )))
+                    },
+                    None => return Responses::Update(
+                        Box::pin(future::ready(
+                                Err(ARError::ReadWriteError("memory store: read failed!".to_string()))
+                        )
+                    ))
+                }
+            },
             Messages::Get(key) => {
                 if self.inner.contains_key(&key) {
                     let val = match self.inner.get(&key){
@@ -93,7 +90,7 @@ impl Handler<Messages> for MemoryStore {
                 } else {
                     Responses::Get(Box::pin(future::ready(Ok(None))))
                 }
-            }
+            },
             Messages::Expire(key) => {
                 let c = match self.inner.get(&key){
                     Some(d) => d,
@@ -107,7 +104,7 @@ impl Handler<Messages> for MemoryStore {
                 let now = SystemTime::now();
                 let dur = dur - now.duration_since(UNIX_EPOCH).unwrap();
                 Responses::Expire(Box::pin(future::ready(Ok(dur))))
-            }
+            },
             Messages::Remove(key) => {
                 let val = match self.inner.remove::<String>(&key){
                     Some(c) => c,
@@ -134,39 +131,14 @@ mod tests{
         let res = addr.send(Messages::Set{
             key: "hello".to_string(),
             value: 30usize,
-            change: 0,
-            expiry: None
-        }).await;
-        let res = res.expect("Failed to send msg");
-        match res{
-            Responses::Set(c) => {
-                match c.await {
-                    Ok(()) => panic!("Shouldn't happen"),
-                    Err(_) => {}
-                }
-            },
-            _ => panic!("Shouldn't happen!")
-        }
-    }
-
-    #[actix_rt::test]
-    async fn test_set_ex() {
-        env_logger::init();
-        let addr = MemoryStore::default().start();
-        let expiry = SystemTime::now();
-        let expiry = expiry.duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(5);
-        let res = addr.send(Messages::Set{
-            key: "hello".to_string(),
-            value: 30usize,
-            change: 0,
-            expiry: Some(expiry)
+            expiry: Duration::from_secs(5),
         }).await;
         let res = res.expect("Failed to send msg");
         match res{
             Responses::Set(c) => {
                 match c.await {
                     Ok(()) => {},
-                    Err(e) => panic!("Shouldn't happen {}", &e)
+                    Err(e) => panic!("Shouldn't happen {}", &e),
                 }
             },
             _ => panic!("Shouldn't happen!")
@@ -177,13 +149,11 @@ mod tests{
     #[actix_rt::test]
     async fn test_get() {
         let addr = MemoryStore::default().start();
-        let expiry = SystemTime::now();
-        let expiry = expiry.duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(5);
+        let expiry = Duration::from_secs(5);
         let res = addr.send(Messages::Set{
             key: "hello".to_string(),
             value: 30usize,
-            change: 0,
-            expiry: Some(expiry)
+            expiry: expiry
         }).await;
         let res = res.expect("Failed to send msg");
         match res{
@@ -214,13 +184,11 @@ mod tests{
     #[actix_rt::test]
     async fn test_expiry() {
         let addr = MemoryStore::default().start();
-        let expiry = SystemTime::now();
-        let expiry = expiry.duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(3);
+        let expiry = Duration::from_secs(3);
         let res = addr.send(Messages::Set{
             key: "hello".to_string(),
             value: 30usize,
-            change: 0,
-            expiry: Some(expiry)
+            expiry: expiry
         }).await;
         let res = res.expect("Failed to send msg");
         match res{
