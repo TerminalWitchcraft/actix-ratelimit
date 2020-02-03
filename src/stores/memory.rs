@@ -55,9 +55,7 @@ impl Handler<Messages> for MemoryStore {
                 if let Some(dur) = expiry {
                     let future_key = String::from(&key);
                     self.inner.insert(key, (value - change, dur));
-                    ctx.run_later(dur, move |a, _| {
-                        a.inner.remove(&future_key);
-                    });
+                    ctx.notify_later(Messages::Remove(future_key), dur);
                 } else {
                     let data = match self.inner.get(&key){
                         Some(c) => c,
