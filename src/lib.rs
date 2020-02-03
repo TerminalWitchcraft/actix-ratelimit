@@ -43,13 +43,13 @@ impl Message for Messages {
     type Result = Responses;
 }
 
-type ResponseOut<T> = Pin<Box<dyn Future<Output = Result<T, ARError>> + Send>>;
+type Output<T> = Pin<Box<dyn Future<Output = Result<T, ARError>> + Send>>;
 pub enum Responses {
-    Get(ResponseOut<Option<usize>>),
-    Set(ResponseOut<()>),
-    Update(ResponseOut<usize>),
-    Expire(ResponseOut<Duration>),
-    Remove(ResponseOut<usize>),
+    Get(Output<Option<usize>>),
+    Set(Output<()>),
+    Update(Output<usize>),
+    Expire(Output<Duration>),
+    Remove(Output<usize>),
 }
 
 impl<A, M> MessageResponse<A, M> for Responses

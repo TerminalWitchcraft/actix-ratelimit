@@ -208,12 +208,9 @@ mod tests{
             Responses::Expire(c) => {
                 match c.await{
                     Ok(dur) => {
-                        let now = SystemTime::now();
-                        let now = now.duration_since(UNIX_EPOCH).unwrap();
-                        if dur >= now{
-                            if dur > now + Duration::from_secs(4){
-                                panic!("Expiry is invalid!");
-                            }
+                        let now = Duration::from_secs(3);
+                        if dur > now{
+                            panic!("Expiry is invalid!");
                         } else if dur > now + Duration::from_secs(4) {
                             panic!("Expiry is invalid!");
                         }
