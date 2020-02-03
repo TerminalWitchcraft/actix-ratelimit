@@ -5,6 +5,7 @@ pub mod stores;
 pub mod middleware;
 use errors::ARError;
 
+#[cfg(feature = "default")]
 pub use stores::MemoryStore;
 #[cfg(feature = "redis-store")]
 pub use stores::RedisStore;

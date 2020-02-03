@@ -24,7 +24,11 @@ use futures::future::{ok, Ready};
 use log::*;
 
 use crate::{Messages, Responses};
+#[cfg(feature = "default")]
 use crate::stores::MemoryStore;
+
+#[cfg(feature = "redis-store")]
+use crate::stores::RedisStore;
 
 pub struct RateLimiter<T>
 where
@@ -37,6 +41,7 @@ where
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String>>,
 }
 
+#[cfg(feature = "default")]
 impl Default for RateLimiter<MemoryStore> {
     fn default() -> Self {
         let store = MemoryStore::default();
@@ -48,6 +53,23 @@ impl Default for RateLimiter<MemoryStore> {
             interval: Duration::from_secs(0),
             max_requests: 0,
             store: Rc::new(store.start()),
+            identifier: Rc::new(Box::new(identifier)),
+        }
+    }
+}
+
+#[cfg(feature = "redis-store")]
+impl Default for RateLimiter<RedisStore> {
+    fn default() -> Self {
+        let store = RedisStore::start("redis://127.0.0.1/");
+        let identifier = |req: &ServiceRequest| {
+            let soc_addr = req.peer_addr().unwrap();
+            soc_addr.ip().to_string()
+        };
+        RateLimiter {
+            interval: Duration::from_secs(0),
+            max_requests: 0,
+            store: Rc::new(store),
             identifier: Rc::new(Box::new(identifier)),
         }
     }
