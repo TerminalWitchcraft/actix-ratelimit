@@ -75,10 +75,13 @@ impl Handler<GetAddr> for RedisStore {
     type Result = Result<MultiplexedConnection, ARError>;
     fn handle(&mut self, _: GetAddr, ctx: &mut Self::Context) -> Self::Result {
         if let Some(con) = &self.client {
-            return Ok(con.clone());
+            Ok(con.clone())
         } else {
             // No connection exists
-            return Err(ARError::NotConnected);
+            if let Some(backoff) = self.backoff.next_backoff() {
+                ctx.run_later(backoff, |_, ctx| ctx.stop());
+            };
+            Err(ARError::NotConnected)
         }
     }
 }
@@ -233,7 +236,8 @@ mod tests {
     #[actix_rt::test]
     async fn test_set() {
         init();
-        let addr = RedisStore::start("redis://127.0.0.1/");
+        let store = RedisStore::connect("redis://127.0.0.1/");
+        let addr = RedisStoreActor::from(store.clone()).start();
         let res = addr
             .send(Messages::Set {
                 key: "hello".to_string(),
@@ -254,7 +258,8 @@ mod tests {
     #[actix_rt::test]
     async fn test_get() {
         init();
-        let addr = RedisStore::start("redis://127.0.0.1/");
+        let store = RedisStore::connect("redis://127.0.0.1/");
+        let addr = RedisStoreActor::from(store.clone()).start();
         let expiry = Duration::from_secs(5);
         let res = addr
             .send(Messages::Set {
@@ -288,7 +293,8 @@ mod tests {
     #[actix_rt::test]
     async fn test_expiry() {
         init();
-        let addr = RedisStore::start("redis://127.0.0.1/");
+        let store = RedisStore::connect("redis://127.0.0.1/");
+        let addr = RedisStoreActor::from(store.clone()).start();
         let expiry = Duration::from_secs(3);
         let res = addr
             .send(Messages::Set {

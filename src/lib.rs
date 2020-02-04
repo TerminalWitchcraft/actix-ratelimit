@@ -6,7 +6,7 @@
 //!
 //! # Usage
 //! Add this to your `Cargo.toml`:
-//! ```
+//! ```toml
 //! actix-web = "2"
 //! actix-rt = "1"
 //! actix-ratelimit = "0.2.0"
@@ -15,10 +15,10 @@
 //! Minimal example:
 //!
 //! ```
-//! use std::time::Duration;
+//! # #[cfg(feature = "default")] {
+//! # use std::time::Duration;
 //! use actix_web::{web, App, HttpRequest, HttpServer, Responder};
-//! use actix_ratelimit::middleware::RateLimiter;
-//! use actix_ratelimit::stores::MemoryStore;
+//! use actix_ratelimit::{RateLimiter, MemoryStore, MemoryStoreActor};
 //!
 //! async fn greet(req: HttpRequest) -> impl Responder{
 //!     let name = req.match_info().get("name").unwrap_or("World!");
@@ -27,13 +27,16 @@
 //!
 //! #[actix_rt::main]
 //! async fn main() -> std::io::Result<()> {
-//!     HttpServer::new(||{
+//!     // Important to initialize store 
+//!     // before calling HttpServer
+//!     let store = MemoryStore::new();
+//!     HttpServer::new(move ||{
 //!         App::new()
 //!             // Register the rate-limiter middleware
 //!             // which allows for maximum of 
 //!             // 100 requests per minute per client
 //!             .wrap(
-//!                 RateLimiter::new(MemoryStore::default().start())
+//!                 RateLimiter::new(MemoryStoreActor::from(store.clone()).start())
 //!                 .with_interval(Duration::from_secs(60))
 //!                 .with_max_requests(100)
 //!             )
@@ -44,9 +47,10 @@
 //!     .run()
 //!     .await
 //! }
+//! # }
 //! ```
 //! Sending a request returns a response with the ratelimiting headers: 
-//! ```
+//! ```shell
 //! echo("Hello");
 //! ```
 //!
@@ -75,11 +79,12 @@ pub mod errors;
 pub mod middleware;
 pub mod stores;
 use errors::ARError;
+pub use middleware::RateLimiter;
 
 #[cfg(feature = "default")]
-pub use stores::MemoryStore;
+pub use stores::memory::{MemoryStore, MemoryStoreActor};
 #[cfg(feature = "redis-store")]
-pub use stores::RedisStore;
+pub use stores::redis::{RedisStore, RedisStoreActor};
 
 use std::future::Future;
 use std::marker::Send;
@@ -107,7 +112,8 @@ impl Message for Messages {
     type Result = Responses;
 }
 
-type Output<T> = Pin<Box<dyn Future<Output = Result<T, ARError>> + Send>>;
+pub type Output<T> = Pin<Box<dyn Future<Output = Result<T, ARError>> + Send>>;
+
 pub enum Responses {
     Get(Output<Option<usize>>),
     Set(Output<()>),
