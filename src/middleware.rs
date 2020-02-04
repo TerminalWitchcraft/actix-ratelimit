@@ -24,11 +24,6 @@ use futures::future::{ok, Ready};
 use log::*;
 
 use crate::{Messages, Responses};
-#[cfg(feature = "default")]
-use crate::stores::MemoryStore;
-
-#[cfg(feature = "redis-store")]
-use crate::stores::RedisStore;
 
 pub struct RateLimiter<T>
 where
@@ -37,43 +32,10 @@ where
 {
     interval: Duration,
     max_requests: usize,
-    store: Rc<Addr<T>>,
+    store: Addr<T>,
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String>>,
 }
 
-#[cfg(feature = "default")]
-impl Default for RateLimiter<MemoryStore> {
-    fn default() -> Self {
-        let store = MemoryStore::default();
-        let identifier = |req: &ServiceRequest| {
-            let soc_addr = req.peer_addr().unwrap();
-            soc_addr.ip().to_string()
-        };
-        RateLimiter {
-            interval: Duration::from_secs(0),
-            max_requests: 0,
-            store: Rc::new(store.start()),
-            identifier: Rc::new(Box::new(identifier)),
-        }
-    }
-}
-
-#[cfg(feature = "redis-store")]
-impl Default for RateLimiter<RedisStore> {
-    fn default() -> Self {
-        let store = RedisStore::start("redis://127.0.0.1/");
-        let identifier = |req: &ServiceRequest| {
-            let soc_addr = req.peer_addr().unwrap();
-            soc_addr.ip().to_string()
-        };
-        RateLimiter {
-            interval: Duration::from_secs(0),
-            max_requests: 0,
-            store: Rc::new(store),
-            identifier: Rc::new(Box::new(identifier)),
-        }
-    }
-}
 
 impl<T> RateLimiter<T>
 where
@@ -84,12 +46,14 @@ where
     pub fn new(store: Addr<T>) -> Self {
         let identifier = |req: &ServiceRequest| {
             let soc_addr = req.peer_addr().unwrap();
-            soc_addr.ip().to_string()
+            let id = soc_addr.ip().to_string();
+            debug!("IP is: {}", &id);
+            id
         };
         RateLimiter {
             interval: Duration::from_secs(0),
             max_requests: 0,
-            store: Rc::new(store),
+            store: store,
             identifier: Rc::new(Box::new(identifier)),
         }
     }
@@ -140,7 +104,7 @@ where
     T: Handler<Messages> + 'static,
 {
     service: Rc<RefCell<S>>,
-    store: Rc<Addr<T>>,
+    store: Addr<T>,
     // Exists here for the sole purpose of knowing the max_requests and interval from RateLimiter
     max_requests: usize,
     interval: u64,
@@ -223,10 +187,11 @@ where
                         }
                     } else {
                         // New client, create entry in store
+                        let current_value = max_requests - 1;
                         store
                             .send(Messages::Set {
                                 key: String::from(&identifier),
-                                value: max_requests,
+                                value: current_value,
                                 expiry: interval,
                             })
                             .await?;
@@ -240,7 +205,7 @@ where
                         );
                         headers.insert(
                             HeaderName::from_static("x-ratelimit-remaining"),
-                            HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                            HeaderValue::from_str(current_value.to_string().as_str()).unwrap(),
                         );
                         headers.insert(
                             HeaderName::from_static("x-ratelimit-reset"),
