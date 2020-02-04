@@ -1,9 +1,16 @@
-
+use actix::dev::*;
+use actix_web::{
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    error::Error as AWError,
+    http::{HeaderName, HeaderValue},
+    HttpResponse,
+};
+use futures::future::{ok, Ready};
+use log::*;
 /// Type that implements the ratelimit middleware. This accepts `interval` which specifies the
 /// window size, `max_requests` which specifies the maximum number of requests in that window, and
 /// `store` which is essentially a data store used to store client access information. Store is any
 /// type that implements `RateLimit` trait.
-
 use std::{
     cell::RefCell,
     future::Future,
@@ -11,17 +18,8 @@ use std::{
     pin::Pin,
     rc::Rc,
     task::{Context, Poll},
-    time::Duration
+    time::Duration,
 };
-use actix::dev::*;
-use actix_web::{
-    HttpResponse,
-    dev::{Service, ServiceRequest, ServiceResponse, Transform},
-    error::Error as AWError,
-    http::{HeaderName, HeaderValue}
-};
-use futures::future::{ok, Ready};
-use log::*;
 
 use crate::{Messages, Responses};
 
@@ -36,7 +34,6 @@ where
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String>>,
 }
 
-
 impl<T> RateLimiter<T>
 where
     T: Handler<Messages> + 'static,
@@ -46,9 +43,7 @@ where
     pub fn new(store: Addr<T>) -> Self {
         let identifier = |req: &ServiceRequest| {
             let soc_addr = req.peer_addr().unwrap();
-            let id = soc_addr.ip().to_string();
-            debug!("IP is: {}", &id);
-            id
+            soc_addr.ip().to_string()
         };
         RateLimiter {
             interval: Duration::from_secs(0),
@@ -160,12 +155,16 @@ where
                         } else {
                             // Execute the req
                             // Decrement value
-                            store
+                            let res: Responses = store
                                 .send(Messages::Update {
                                     key: identifier,
                                     value: 1,
                                 })
                                 .await?;
+                            let _ = match res {
+                                Responses::Update(c) => c.await?,
+                                _ => unreachable!(),
+                            };
                             let fut = srv.call(req);
                             let mut res = fut.await?;
                             let headers = res.headers_mut();
@@ -188,13 +187,17 @@ where
                     } else {
                         // New client, create entry in store
                         let current_value = max_requests - 1;
-                        store
+                        let res = store
                             .send(Messages::Set {
                                 key: String::from(&identifier),
                                 value: current_value,
                                 expiry: interval,
                             })
                             .await?;
+                        match res {
+                            Responses::Set(c) => c.await?,
+                            _ => unreachable!(),
+                        }
                         let fut = srv.call(req);
                         let mut res = fut.await?;
                         let headers = res.headers_mut();
