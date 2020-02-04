@@ -8,6 +8,11 @@ use std::time::Duration;
 use crate::errors::ARError;
 use crate::{Messages, Responses};
 
+struct GetAddr;
+impl Message for GetAddr {
+    type Result = Result<MultiplexedConnection, ARError>;
+}
+
 pub struct RedisStore {
     addr: String,
     backoff: ExponentialBackoff,
@@ -15,7 +20,7 @@ pub struct RedisStore {
 }
 
 impl RedisStore {
-    pub fn start<S: Into<String>>(addr: S) -> Addr<Self> {
+    pub fn connect<S: Into<String>>(addr: S) -> Addr<Self> {
         let addr = addr.into();
         let mut backoff = ExponentialBackoff::default();
         backoff.max_elapsed_time = None;
@@ -31,6 +36,7 @@ impl Actor for RedisStore {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
+        info!("Started main redis store");
         let addr = self.addr.clone();
         async move {
             let client = redis::Client::open(addr.as_ref()).unwrap();
@@ -60,15 +66,88 @@ impl Actor for RedisStore {
 
 impl Supervised for RedisStore {
     fn restarting(&mut self, _: &mut Self::Context) {
-        debug!("Restarting redisStore");
+        debug!("restarting redis store");
         self.client.take();
     }
 }
 
-impl Handler<Messages> for RedisStore {
+impl Handler<GetAddr> for RedisStore {
+    type Result = Result<MultiplexedConnection, ARError>;
+    fn handle(&mut self, _: GetAddr, ctx: &mut Self::Context) -> Self::Result {
+        if let Some(con) = &self.client {
+            return Ok(con.clone());
+        } else {
+            // No connection exists
+            return Err(ARError::NotConnected);
+        }
+    }
+}
+
+pub struct RedisStoreActor {
+    addr: Addr<RedisStore>,
+    backoff: ExponentialBackoff,
+    inner: Option<MultiplexedConnection>,
+}
+
+impl Actor for RedisStoreActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        let addr = self.addr.clone();
+        async move { addr.send(GetAddr).await }
+            .into_actor(self)
+            .map(|res, act, context| match res {
+                Ok(c) => {
+                    if let Ok(conn) = c {
+                        act.inner = Some(conn);
+                    } else {
+                        error!("could not get redis store address");
+                        if let Some(timeout) = act.backoff.next_backoff() {
+                            context.run_later(timeout, |_, ctx| ctx.stop());
+                        }
+                    }
+                }
+                Err(_) => {
+                    error!("mailboxerror: could not get redis store address");
+                    if let Some(timeout) = act.backoff.next_backoff() {
+                        context.run_later(timeout, |_, ctx| ctx.stop());
+                    }
+                }
+            })
+            .wait(ctx);
+    }
+}
+
+impl From<Addr<RedisStore>> for RedisStoreActor {
+    fn from(addr: Addr<RedisStore>) -> Self {
+        let mut backoff = ExponentialBackoff::default();
+        backoff.max_interval = Duration::from_secs(3);
+        RedisStoreActor {
+            addr,
+            backoff,
+            inner: None,
+        }
+    }
+}
+
+impl RedisStoreActor {
+    pub fn start(self) -> Addr<Self> {
+        debug!("started redis actor");
+        Supervisor::start(|_| self)
+    }
+}
+
+impl Supervised for RedisStoreActor {
+    fn restarting(&mut self, _: &mut Self::Context) {
+        debug!("restarting redis actor!");
+        self.inner.take();
+    }
+}
+
+impl Handler<Messages> for RedisStoreActor {
     type Result = Responses;
     fn handle(&mut self, msg: Messages, ctx: &mut Self::Context) -> Self::Result {
-        let connection = self.client.clone();
+        let connection = self.inner.clone();
         if let Some(mut con) = connection {
             match msg {
                 Messages::Set { key, value, expiry } => Responses::Set(Box::pin(async move {
@@ -101,6 +180,7 @@ impl Handler<Messages> for RedisStore {
                     let result = cmd
                         .query_async::<MultiplexedConnection, Option<usize>>(&mut con)
                         .await;
+
                     match result {
                         Ok(c) => Ok(c),
                         Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
