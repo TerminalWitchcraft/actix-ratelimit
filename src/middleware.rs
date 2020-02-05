@@ -7,10 +7,6 @@ use actix_web::{
 };
 use futures::future::{ok, Ready};
 use log::*;
-/// Type that implements the ratelimit middleware. This accepts `interval` which specifies the
-/// window size, `max_requests` which specifies the maximum number of requests in that window, and
-/// `store` which is essentially a data store used to store client access information. Store is any
-/// type that implements `RateLimit` trait.
 use std::{
     cell::RefCell,
     future::Future,
@@ -23,9 +19,13 @@ use std::{
 
 use crate::{Messages, Responses};
 
+/// Type that implements the ratelimit middleware. This accepts `interval` which specifies the
+/// window size, `max_requests` which specifies the maximum number of requests in that window, and
+/// `store` which is essentially a data store used to store client access information. Store is any
+/// type that implements `RateLimit` trait.
 pub struct RateLimiter<T>
 where
-    T: Handler<Messages> + 'static,
+    T: Handler<Messages> + Send + Sync + 'static,
     T::Context: ToEnvelope<T, Messages>,
 {
     interval: Duration,
@@ -36,7 +36,7 @@ where
 
 impl<T> RateLimiter<T>
 where
-    T: Handler<Messages> + 'static,
+    T: Handler<Messages> + Send + Sync + 'static,
     <T as Actor>::Context: ToEnvelope<T, Messages>,
 {
     /// Creates a new instance of `RateLimiter`.
@@ -68,7 +68,7 @@ where
 
 impl<T, S, B> Transform<S> for RateLimiter<T>
 where
-    T: Handler<Messages> + 'static,
+    T: Handler<Messages> + Send + Sync + 'static,
     T::Context: ToEnvelope<T, Messages>,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
@@ -87,7 +87,7 @@ where
             store: self.store.clone(),
             max_requests: self.max_requests,
             interval: self.interval.as_secs(),
-            get_identifier: self.identifier.clone(),
+            identifier: self.identifier.clone(),
         })
     }
 }
@@ -103,7 +103,7 @@ where
     // Exists here for the sole purpose of knowing the max_requests and interval from RateLimiter
     max_requests: usize,
     interval: u64,
-    get_identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String + 'static>>,
+    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> String + 'static>>,
 }
 
 impl<T, S, B> Service for RateLimitMiddleware<S, T>
@@ -128,9 +128,9 @@ where
         let mut srv = self.service.clone();
         let max_requests = self.max_requests;
         let interval = Duration::from_secs(self.interval);
-        let get_identifier = self.get_identifier.clone();
+        let identifier = self.identifier.clone();
         Box::pin(async move {
-            let identifier: String = (get_identifier)(&req);
+            let identifier: String = (identifier)(&req);
             let remaining: Responses = store.send(Messages::Get(String::from(&identifier))).await?;
             match remaining {
                 Responses::Get(opt) => {
@@ -153,7 +153,6 @@ where
                             response.set_header("x-ratelimit-reset", reset.as_secs().to_string());
                             Err(response.into())
                         } else {
-                            // Execute the req
                             // Decrement value
                             let res: Responses = store
                                 .send(Messages::Update {
@@ -161,26 +160,26 @@ where
                                     value: 1,
                                 })
                                 .await?;
-                            let _ = match res {
+                            let updated_value: usize = match res {
                                 Responses::Update(c) => c.await?,
                                 _ => unreachable!(),
                             };
+                            // Execute the request
                             let fut = srv.call(req);
                             let mut res = fut.await?;
                             let headers = res.headers_mut();
                             // Safe unwraps, since usize is always convertible to string
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-limit"),
-                                HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
+                                HeaderValue::from_str(max_requests.to_string().as_str())?,
                             );
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-remaining"),
-                                HeaderValue::from_str(c.to_string().as_str()).unwrap(),
+                                HeaderValue::from_str(updated_value.to_string().as_str())?,
                             );
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-reset"),
-                                HeaderValue::from_str(reset.as_secs().to_string().as_str())
-                                    .unwrap(),
+                                HeaderValue::from_str(reset.as_secs().to_string().as_str())?,
                             );
                             Ok(res)
                         }
