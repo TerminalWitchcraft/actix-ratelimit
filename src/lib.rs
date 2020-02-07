@@ -138,7 +138,7 @@
 //! ```
 //!
 //! * It is **important** to initialize store before creating HttpServer instance, or else a store
-//! will be created for each web worker. This may lead to unstability and inconsistency! For
+//! will be created for each web worker. This may lead to instability and inconsistency! For
 //! example, initializing your app in the following manner would create more than one stores:
 //! ```rust
 //! # #[cfg(feature = "default")] {
