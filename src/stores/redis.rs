@@ -1,3 +1,4 @@
+//! Redis store for rate limiting
 use actix::prelude::*;
 use backoff::backoff::Backoff;
 use backoff::ExponentialBackoff;
@@ -6,13 +7,14 @@ use redis_rs::{self as redis, aio::MultiplexedConnection};
 use std::time::Duration;
 
 use crate::errors::ARError;
-use crate::{Messages, Responses};
+use crate::{ActorMessage, ActorResponse};
 
 struct GetAddr;
 impl Message for GetAddr {
     type Result = Result<MultiplexedConnection, ARError>;
 }
 
+/// Type used to connect to a running redis instance
 pub struct RedisStore {
     addr: String,
     backoff: ExponentialBackoff,
@@ -20,6 +22,18 @@ pub struct RedisStore {
 }
 
 impl RedisStore {
+    /// Accepts a valid connection string to connect to redis
+    ///
+    /// # Example
+    /// ```rust
+    /// use actix_ratelimit::RedisStore;
+    ///
+    /// #[actix_rt::main]
+    /// async fn main() -> std::io::Result<()>{
+    ///     let store = RedisStore::connect("redis://127.0.0.1");
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn connect<S: Into<String>>(addr: S) -> Addr<Self> {
         let addr = addr.into();
         let mut backoff = ExponentialBackoff::default();
@@ -86,6 +100,7 @@ impl Handler<GetAddr> for RedisStore {
     }
 }
 
+/// Actor for redis store
 pub struct RedisStoreActor {
     addr: Addr<RedisStore>,
     backoff: ExponentialBackoff,
@@ -134,6 +149,7 @@ impl From<Addr<RedisStore>> for RedisStoreActor {
 }
 
 impl RedisStoreActor {
+    /// Starts the redis actor and returns it's address
     pub fn start(self) -> Addr<Self> {
         debug!("started redis actor");
         Supervisor::start(|_| self)
@@ -147,37 +163,41 @@ impl Supervised for RedisStoreActor {
     }
 }
 
-impl Handler<Messages> for RedisStoreActor {
-    type Result = Responses;
-    fn handle(&mut self, msg: Messages, ctx: &mut Self::Context) -> Self::Result {
+impl Handler<ActorMessage> for RedisStoreActor {
+    type Result = ActorResponse;
+    fn handle(&mut self, msg: ActorMessage, ctx: &mut Self::Context) -> Self::Result {
         let connection = self.inner.clone();
         if let Some(mut con) = connection {
             match msg {
-                Messages::Set { key, value, expiry } => Responses::Set(Box::pin(async move {
-                    let mut cmd = redis::Cmd::new();
-                    cmd.arg("SET")
-                        .arg(key)
-                        .arg(value)
-                        .arg("EX")
-                        .arg(expiry.as_secs());
-                    let result = cmd.query_async::<MultiplexedConnection, ()>(&mut con).await;
-                    match result {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
-                    }
-                })),
-                Messages::Update { key, value } => Responses::Update(Box::pin(async move {
-                    let mut cmd = redis::Cmd::new();
-                    cmd.arg("DECRBY").arg(key).arg(value);
-                    let result = cmd
-                        .query_async::<MultiplexedConnection, usize>(&mut con)
-                        .await;
-                    match result {
-                        Ok(c) => Ok(c),
-                        Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
-                    }
-                })),
-                Messages::Get(key) => Responses::Get(Box::pin(async move {
+                ActorMessage::Set { key, value, expiry } => {
+                    ActorResponse::Set(Box::pin(async move {
+                        let mut cmd = redis::Cmd::new();
+                        cmd.arg("SET")
+                            .arg(key)
+                            .arg(value)
+                            .arg("EX")
+                            .arg(expiry.as_secs());
+                        let result = cmd.query_async::<MultiplexedConnection, ()>(&mut con).await;
+                        match result {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
+                        }
+                    }))
+                }
+                ActorMessage::Update { key, value } => {
+                    ActorResponse::Update(Box::pin(async move {
+                        let mut cmd = redis::Cmd::new();
+                        cmd.arg("DECRBY").arg(key).arg(value);
+                        let result = cmd
+                            .query_async::<MultiplexedConnection, usize>(&mut con)
+                            .await;
+                        match result {
+                            Ok(c) => Ok(c),
+                            Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
+                        }
+                    }))
+                }
+                ActorMessage::Get(key) => ActorResponse::Get(Box::pin(async move {
                     let mut cmd = redis::Cmd::new();
                     cmd.arg("GET").arg(key);
                     let result = cmd
@@ -189,7 +209,7 @@ impl Handler<Messages> for RedisStoreActor {
                         Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
                     }
                 })),
-                Messages::Expire(key) => Responses::Expire(Box::pin(async move {
+                ActorMessage::Expire(key) => ActorResponse::Expire(Box::pin(async move {
                     let mut cmd = redis::Cmd::new();
                     cmd.arg("TTL").arg(key);
                     let result = cmd
@@ -206,7 +226,7 @@ impl Handler<Messages> for RedisStoreActor {
                         Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
                     }
                 })),
-                Messages::Remove(key) => Responses::Remove(Box::pin(async move {
+                ActorMessage::Remove(key) => ActorResponse::Remove(Box::pin(async move {
                     let mut cmd = redis::Cmd::new();
                     cmd.arg("DEL").arg(key);
                     let result = cmd
@@ -220,7 +240,7 @@ impl Handler<Messages> for RedisStoreActor {
             }
         } else {
             ctx.stop();
-            Responses::Set(Box::pin(async move { Err(ARError::Disconnected) }))
+            ActorResponse::Set(Box::pin(async move { Err(ARError::Disconnected) }))
         }
     }
 }
@@ -239,7 +259,7 @@ mod tests {
         let store = RedisStore::connect("redis://127.0.0.1/");
         let addr = RedisStoreActor::from(store.clone()).start();
         let res = addr
-            .send(Messages::Set {
+            .send(ActorMessage::Set {
                 key: "hello".to_string(),
                 value: 30usize,
                 expiry: Duration::from_secs(5),
@@ -247,7 +267,7 @@ mod tests {
             .await;
         let res = res.expect("Failed to send msg");
         match res {
-            Responses::Set(c) => match c.await {
+            ActorResponse::Set(c) => match c.await {
                 Ok(()) => {}
                 Err(e) => panic!("Shouldn't happen: {}", &e),
             },
@@ -262,7 +282,7 @@ mod tests {
         let addr = RedisStoreActor::from(store.clone()).start();
         let expiry = Duration::from_secs(5);
         let res = addr
-            .send(Messages::Set {
+            .send(ActorMessage::Set {
                 key: "hello".to_string(),
                 value: 30usize,
                 expiry: expiry,
@@ -270,16 +290,16 @@ mod tests {
             .await;
         let res = res.expect("Failed to send msg");
         match res {
-            Responses::Set(c) => match c.await {
+            ActorResponse::Set(c) => match c.await {
                 Ok(()) => {}
                 Err(e) => panic!("Shouldn't happen {}", &e),
             },
             _ => panic!("Shouldn't happen!"),
         }
-        let res2 = addr.send(Messages::Get("hello".to_string())).await;
+        let res2 = addr.send(ActorMessage::Get("hello".to_string())).await;
         let res2 = res2.expect("Failed to send msg");
         match res2 {
-            Responses::Get(c) => match c.await {
+            ActorResponse::Get(c) => match c.await {
                 Ok(d) => {
                     let d = d.unwrap();
                     assert_eq!(d, 30usize);
@@ -297,7 +317,7 @@ mod tests {
         let addr = RedisStoreActor::from(store.clone()).start();
         let expiry = Duration::from_secs(3);
         let res = addr
-            .send(Messages::Set {
+            .send(ActorMessage::Set {
                 key: "hello_test".to_string(),
                 value: 30usize,
                 expiry: expiry,
@@ -305,7 +325,7 @@ mod tests {
             .await;
         let res = res.expect("Failed to send msg");
         match res {
-            Responses::Set(c) => match c.await {
+            ActorResponse::Set(c) => match c.await {
                 Ok(()) => {}
                 Err(e) => panic!("Shouldn't happen {}", &e),
             },
@@ -313,10 +333,12 @@ mod tests {
         }
         assert_eq!(addr.connected(), true);
 
-        let res3 = addr.send(Messages::Expire("hello_test".to_string())).await;
+        let res3 = addr
+            .send(ActorMessage::Expire("hello_test".to_string()))
+            .await;
         let res3 = res3.expect("Failed to send msg");
         match res3 {
-            Responses::Expire(c) => match c.await {
+            ActorResponse::Expire(c) => match c.await {
                 Ok(dur) => {
                     let now = Duration::from_secs(3);
                     if dur > now {
