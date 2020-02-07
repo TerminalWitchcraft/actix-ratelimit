@@ -8,7 +8,7 @@ This crate provides an asynchronous and concurrent rate limiting middleware base
 model which can be wraped around an [Actix](https://actix.rs/) application. Middleware contains a store which is used to
 identify client request.
 
-Check out the [documentation here](https://docs.rs/actix-ratelimit/0.2.0).
+Check out the [documentation here](https://docs.rs/actix-ratelimit/).
 
 Comments, suggesstions and critiques are welcomed!
 
@@ -86,8 +86,8 @@ note that there are multiple store actors acting on a _single_ store.
 
 ## Implementing your own store
 
-To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](enum.ActorMessage.html) type
-and return [ActorResponse](enum.ActorResponse.html) type. Check the [module level documentation](stores/index.html) for
+To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.2.0/actix_ratelimit/enum.ActorMessage.html) type
+and return [ActorResponse](https://docs.rs/actix-ratelimit/0.2.0/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.2.0/actix_ratelimit/stores/index.html) for
 more details and a basic example.
 
 ## Note to developers

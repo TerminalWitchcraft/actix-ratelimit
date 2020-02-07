@@ -5,7 +5,7 @@
 //! model which can be wraped around an [Actix](https://actix.rs/) application. Middleware contains a store which is used to
 //! identify client request.
 //!
-//! Check out the [documentation here](https://docs.rs/actix-ratelimit/0.2.0).
+//! Check out the [documentation here](https://docs.rs/actix-ratelimit/).
 //!
 //! Comments, suggesstions and critiques are welcomed!
 //!
