@@ -12,7 +12,8 @@
 //! # Usage
 //! Add this to your Cargo.toml:
 //! ```toml
-//! actix-ratelimit = "0.2.0"
+//! [dependencies]
+//! actix-ratelimit = "0.2.1"
 //! ```
 //!
 //! Minimal example:
@@ -95,7 +96,7 @@
 //! * To use redis store, put this to your Cargo.toml:
 //! ```toml
 //! [dependencies]
-//! actix_ratelimit = {version = "0.2.0", default-features = false, features = ["redis-store"]}
+//! actix-ratelimit = {version = "0.2.1", default-features = false, features = ["redis-store"]}
 //! ```
 //!
 //! * By default, the client's IP address is used as the identifier which can be customized

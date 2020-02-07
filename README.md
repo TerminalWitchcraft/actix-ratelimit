@@ -15,7 +15,8 @@ Comments, suggesstions and critiques are welcomed!
 ## Usage
 Add this to your Cargo.toml:
 ```toml
-actix-ratelimit = "0.2.0"
+[dependencies]
+actix-ratelimit = "0.2.1"
 ```
 
 Minimal example:
@@ -86,8 +87,8 @@ note that there are multiple store actors acting on a _single_ store.
 
 ## Implementing your own store
 
-To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.2.0/actix_ratelimit/enum.ActorMessage.html) type
-and return [ActorResponse](https://docs.rs/actix-ratelimit/0.2.0/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.2.0/actix_ratelimit/stores/index.html) for
+To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.2.1/actix_ratelimit/enum.ActorMessage.html) type
+and return [ActorResponse](https://docs.rs/actix-ratelimit/0.2.1/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.2.1/actix_ratelimit/stores/index.html) for
 more details and a basic example.
 
 ## Note to developers
@@ -95,7 +96,7 @@ more details and a basic example.
 * To use redis store, put this to your Cargo.toml:
 ```toml
 [dependencies]
-actix_ratelimit = {version = "0.2.0", default-features = false, features = ["redis-store"]}
+actix-ratelimit = {version = "0.2.1", default-features = false, features = ["redis-store"]}
 ```
 
 * By default, the client's IP address is used as the identifier which can be customized
