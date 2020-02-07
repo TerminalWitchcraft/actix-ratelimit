@@ -1,17 +1,18 @@
 [package]
 name = "actix-ratelimit"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Hitesh Paul <git@hiteshpaul.com>"]
 edition = "2018"
 description = "Rate limiting middleware framework for actix-web"
 homepage = "https://github.com/TerminalWitchcraft/actix-ratelimit"
-documentation = "https://github.com/TerminalWitchcraft/actix-ratelimit"
 repository = "https://github.com/TerminalWitchcraft/actix-ratelimit"
-readme = "README.md"
+readme = "./README.md"
 keywords = ["actix", "actix-web", "ratelimit", "middleware", "rate-limiting"]
 categories = ["web-programming::http-server", "web-programming", "asynchronous", "caching", "web-programming::http-client"]
 license = "MIT"
 
+[badges]
+maintenance = { status = "actively-developed" }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
@@ -34,3 +35,4 @@ backoff = {version = "0.1.6", optional = true}
 [dev-dependencies]
 actix-rt = "1.0.0"
 env_logger = "0.7.1"
+version-sync = "0.8.1"
