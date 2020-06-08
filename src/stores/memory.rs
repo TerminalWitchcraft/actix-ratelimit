@@ -123,9 +123,9 @@ impl Handler<ActorMessage> for MemoryStoreActor {
                     }
                 };
                 let dur = c.value().1;
-                let now = SystemTime::now();
-                let dur = dur - now.duration_since(UNIX_EPOCH).unwrap();
-                ActorResponse::Expire(Box::pin(future::ready(Ok(dur))))
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                let res = dur.checked_sub(now).unwrap_or_else(|| Duration::new(0,0));
+                ActorResponse::Expire(Box::pin(future::ready(Ok(res))))
             }
             ActorMessage::Remove(key) => {
                 debug!("Removing key: {}", &key);
