@@ -87,7 +87,11 @@ impl Handler<ActorMessage> for MemoryStoreActor {
             ActorMessage::Update { key, value } => match self.inner.get_mut(&key) {
                 Some(mut c) => {
                     let val_mut: &mut (usize, Duration) = c.value_mut();
-                    val_mut.0 -= value;
+                    if val_mut.0 > value {
+                        val_mut.0 -= value;
+                    } else {
+                        val_mut.0 = 0;
+                    }
                     let new_val = val_mut.0;
                     ActorResponse::Update(Box::pin(future::ready(Ok(new_val))))
                 }
