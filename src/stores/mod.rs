@@ -85,5 +85,5 @@ pub mod memory;
 #[cfg(feature = "redis-store")]
 pub mod redis;
 
-#[cfg(feature = "memcached")]
-pub mod memcached;
+// #[cfg(feature = "memcached")]
+// pub mod memcached;

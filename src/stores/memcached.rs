@@ -4,6 +4,12 @@ use backoff::backoff::Backoff;
 use backoff::ExponentialBackoff;
 use log::*;
 use memcache::Client;
+use crate::errors::ARError;
+
+struct GetAddr;
+impl Message for GetAddr{
+    type Result = Result<&Client, ARError>;
+}
 
 pub struct MemcacheStore {
     addr: String,
@@ -32,16 +38,20 @@ impl Actor for MemcacheStore {
         let addr = self.addr.clone();
         async move { Client::connect(addr.as_ref()) }
             .into_actor(self)
-            .map(|con, act, context| match con {
-                Ok(c) => {
-                    act.client = Some(c);
-                }
-                Err(e) => {
-                    error!("Error connecting to memcached: {}", &e);
-                    if let Some(timeout) = act.backoff.next_backoff() {
-                        context.run_later(timeout, |_, ctx| ctx.stop());
+            .map(|con, act, context| {
+                match con {
+                    Ok(c) => {
+                        act.client = Some(c);
                     }
-                }
+                    Err(e) => {
+                        error!("Error connecting to memcached: {}", &e);
+                        if let Some(timeout) = act.backoff.next_backoff() {
+                            context.run_later(timeout, |_, ctx| ctx.stop());
+                        }
+                    }
+                };
+                info!("Connected to memcached server");
+                act.backoff.reset();
             })
             .wait(ctx);
     }
@@ -53,3 +63,22 @@ impl Supervised for MemcacheStore {
         self.client.take();
     }
 }
+
+
+impl Handler<GetAddr> for MemcacheStore {
+    type Result = Result<&Client, ARError>;
+    fn handle(&mut self, _: GetAddr, ctx: &mut Self::Context) -> Self::Result {
+        if let Some(con) = &self.client {
+            Ok(con)
+        } else {
+            if let Some(backoff) = self.backoff.next_backoff() {
+                ctx.run_later(backoff, |_, ctx| ctx.stop());
+            };
+            Err(ARError::NotConnected)
+        }
+    }
+}
+
+
+
+pub struct MemcacheStoreActor;

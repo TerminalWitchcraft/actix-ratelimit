@@ -194,6 +194,8 @@ pub use middleware::RateLimiter;
 pub use stores::memory::{MemoryStore, MemoryStoreActor};
 #[cfg(feature = "redis-store")]
 pub use stores::redis::{RedisStore, RedisStoreActor};
+// #[cfg(feature = "memcached")]
+// pub use stores::memcached::{MemcacheStore};
 
 use std::future::Future;
 use std::marker::Send;
