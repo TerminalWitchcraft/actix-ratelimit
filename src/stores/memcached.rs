@@ -1,20 +1,21 @@
 //! Memcached store for rate limiting
+use crate::errors::ARError;
 use actix::prelude::*;
 use backoff::backoff::Backoff;
 use backoff::ExponentialBackoff;
 use log::*;
-use memcache::Client;
-use crate::errors::ARError;
+use r2d2_memcache::r2d2::Pool;
+use r2d2_memcache::MemcacheConnectionManager;
 
 struct GetAddr;
-impl Message for GetAddr{
-    type Result = Result<&Client, ARError>;
+impl Message for GetAddr {
+    type Result = Result<Pool<MemcacheConnectionManager>, ARError>;
 }
 
 pub struct MemcacheStore {
     addr: String,
     backoff: ExponentialBackoff,
-    client: Option<Client>,
+    client: Option<Pool<MemcacheConnectionManager>>,
 }
 
 impl MemcacheStore {
@@ -22,10 +23,12 @@ impl MemcacheStore {
         let addr = addr.into();
         let mut backoff = ExponentialBackoff::default();
         backoff.max_elapsed_time = None;
+        let manager = MemcacheConnectionManager::new(addr.clone());
+        let pool = Pool::builder().max_size(15).build(manager).unwrap();
         Supervisor::start(|_| MemcacheStore {
             addr,
             backoff,
-            client: None,
+            client: Some(pool),
         })
     }
 }
@@ -36,7 +39,9 @@ impl Actor for MemcacheStore {
     fn started(&mut self, ctx: &mut Context<Self>) {
         info!("Started memcached store");
         let addr = self.addr.clone();
-        async move { Client::connect(addr.as_ref()) }
+        let manager = MemcacheConnectionManager::new(addr);
+        let pool = Pool::builder().max_size(15).build(manager);
+        async move { pool }
             .into_actor(self)
             .map(|con, act, context| {
                 match con {
@@ -64,12 +69,11 @@ impl Supervised for MemcacheStore {
     }
 }
 
-
 impl Handler<GetAddr> for MemcacheStore {
-    type Result = Result<&Client, ARError>;
+    type Result = Result<Pool<MemcacheConnectionManager>, ARError>;
     fn handle(&mut self, _: GetAddr, ctx: &mut Self::Context) -> Self::Result {
         if let Some(con) = &self.client {
-            Ok(con)
+            Ok(con.clone())
         } else {
             if let Some(backoff) = self.backoff.next_backoff() {
                 ctx.run_later(backoff, |_, ctx| ctx.stop());
@@ -78,7 +82,5 @@ impl Handler<GetAddr> for MemcacheStore {
         }
     }
 }
-
-
 
 pub struct MemcacheStoreActor;
