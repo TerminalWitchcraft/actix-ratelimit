@@ -24,13 +24,14 @@ Minimal example:
 ```rust
 use actix_web::{web, App, HttpRequest, HttpServer, Responder};
 use actix_ratelimit::{RateLimiter, MemoryStore, MemoryStoreActor};
+use std::time::Duration;
 
 async fn greet(req: HttpRequest) -> impl Responder{
     let name = req.match_info().get("name").unwrap_or("World!");
     format!("Hello {}!", &name)
 }
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize store
     let store = MemoryStore::new();
@@ -103,7 +104,7 @@ actix-ratelimit = {version = "0.2.1", default-features = false, features = ["red
 using [ServiceRequest](https://docs.rs/actix-web/2.0.0/actix_web/dev/struct.ServiceRequest.html) instance.
 For example, using api key header to identify client:
 ```rust
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize store
     let store = MemoryStore::new();
@@ -133,7 +134,7 @@ async fn main() -> std::io::Result<()> {
 will be created for each web worker. This may lead to instability and inconsistency! For
 example, initializing your app in the following manner would create more than one stores:
 ```rust
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     HttpServer::new(move ||{
         App::new()

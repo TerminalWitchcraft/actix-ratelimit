@@ -29,7 +29,7 @@
 //!     format!("Hello {}!", &name)
 //! }
 //!
-//! #[actix_rt::main]
+//! #[actix_web::main]
 //! async fn main() -> std::io::Result<()> {
 //!     // Initialize store
 //!     let store = MemoryStore::new();
@@ -111,7 +111,7 @@
 //! #     let name = req.match_info().get("name").unwrap_or("World!");
 //! #     format!("Hello {}!", &name)
 //! # }
-//! #[actix_rt::main]
+//! #[actix_web::main]
 //! async fn main() -> std::io::Result<()> {
 //!     // Initialize store
 //!     let store = MemoryStore::new();
@@ -150,7 +150,7 @@
 //! #     let name = req.match_info().get("name").unwrap_or("World!");
 //! #     format!("Hello {}!", &name)
 //! # }
-//! #[actix_rt::main]
+//! #[actix_web::main]
 //! async fn main() -> std::io::Result<()> {
 //!     HttpServer::new(move ||{
 //!         App::new()
@@ -194,6 +194,8 @@ pub use middleware::RateLimiter;
 pub use stores::memory::{MemoryStore, MemoryStoreActor};
 #[cfg(feature = "redis-store")]
 pub use stores::redis::{RedisStore, RedisStoreActor};
+// #[cfg(feature = "memcached")]
+// pub use stores::memcached::{MemcacheStore};
 
 use std::future::Future;
 use std::marker::Send;

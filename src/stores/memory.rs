@@ -87,7 +87,11 @@ impl Handler<ActorMessage> for MemoryStoreActor {
             ActorMessage::Update { key, value } => match self.inner.get_mut(&key) {
                 Some(mut c) => {
                     let val_mut: &mut (usize, Duration) = c.value_mut();
-                    val_mut.0 -= value;
+                    if val_mut.0 > value {
+                        val_mut.0 -= value;
+                    } else {
+                        val_mut.0 = 0;
+                    }
                     let new_val = val_mut.0;
                     ActorResponse::Update(Box::pin(future::ready(Ok(new_val))))
                 }
@@ -123,9 +127,9 @@ impl Handler<ActorMessage> for MemoryStoreActor {
                     }
                 };
                 let dur = c.value().1;
-                let now = SystemTime::now();
-                let dur = dur - now.duration_since(UNIX_EPOCH).unwrap();
-                ActorResponse::Expire(Box::pin(future::ready(Ok(dur))))
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                let res = dur.checked_sub(now).unwrap_or_else(|| Duration::new(0, 0));
+                ActorResponse::Expire(Box::pin(future::ready(Ok(res))))
             }
             ActorMessage::Remove(key) => {
                 debug!("Removing key: {}", &key);

@@ -19,12 +19,13 @@ travis-ci = { repository = "TerminalWitchcraft/actix-ratelimit", branch = "maste
 
 default = ["dashmap"]
 redis-store = ["redis_rs", "backoff"]
-memcached = ["memcache", "backoff"]
+memcached = ["r2d2-memcache", "backoff"]
 
 [dependencies]
 log = "0.4.8"
-actix-web = "2.0.0"
-actix = "0.9.0"
+actix-web = {version = "3.0.1"}
+actix-http = {version = "2.0.0", features=["actors"]}
+actix = "0.10"
 futures = "0.3.1"
 failure = "0.1.6"
 
@@ -32,9 +33,9 @@ dashmap = {version = "3.2.2", optional = true}
 
 redis_rs = {version = "0.15.1", optional = true, package= "redis"}
 backoff = {version = "0.1.6", optional = true}
-memcache = {version = "*", optional = true}
+r2d2-memcache = { version = "0.5", optional = true }
 
 [dev-dependencies]
-actix-rt = "1.0.0"
+actix-rt = "1.1.1"
 env_logger = "0.7.1"
 version-sync = "0.8.1"

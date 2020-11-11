@@ -8,7 +8,7 @@
 //! When a new key is created, tokens are assigned to it based on the value of _max_requests_ which
 //! are valid for an _interval_. Once time has elapsed equal to the _interval_, the key is removed
 //! from the store. Memory store uses deferred messages to the actor to accomplish this, whereas
-//! key expiry is used for redis.  
+//! key expiry is used for redis.
 //!
 //! Store actors are implemented as supervised actors, and if you implement your own store, it is
 //! recommended to implement it as a Supervised actor to achieve some level of fault tolerance.

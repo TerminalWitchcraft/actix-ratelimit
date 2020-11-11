@@ -63,7 +63,7 @@ where
         let identifier = |req: &ServiceRequest| {
             let connection_info = req.connection_info();
             let ip = connection_info
-                .remote()
+                .remote_addr()
                 .ok_or(ARError::IdentificationError)?;
             Ok(String::from(ip))
         };
