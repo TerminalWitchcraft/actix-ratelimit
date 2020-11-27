@@ -1,6 +1,6 @@
 [package]
 name = "actix-ratelimit"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Hitesh Paul <git@hiteshpaul.com>"]
 edition = "2018"
 description = "Rate limiting middleware framework for actix-web"
@@ -8,7 +8,13 @@ homepage = "https://github.com/TerminalWitchcraft/actix-ratelimit"
 repository = "https://github.com/TerminalWitchcraft/actix-ratelimit"
 readme = "./README.md"
 keywords = ["actix", "actix-web", "ratelimit", "middleware", "rate-limiting"]
-categories = ["web-programming::http-server", "web-programming", "asynchronous", "caching", "web-programming::http-client"]
+categories = [
+    "web-programming::http-server",
+    "web-programming",
+    "asynchronous",
+    "caching",
+    "web-programming::http-client",
+]
 license = "MIT"
 
 [badges]
@@ -23,17 +29,17 @@ memcached = ["memcache", "backoff"]
 
 [dependencies]
 log = "0.4.8"
-actix-web = {version = "3.0.1"}
-actix-http = {version = "2.0.0", features=["actors"]}
+actix-web = { version = "3.3.0" }
+actix-http = { version = "2.0.0", features = ["actors"] }
 actix = "0.10"
 futures = "0.3.1"
 failure = "0.1.6"
 
-dashmap = {version = "3.2.2", optional = true}
+dashmap = { version = "3.2.2", optional = true }
 
-redis_rs = {version = "0.15.1", optional = true, package= "redis"}
-backoff = {version = "0.1.6", optional = true}
-memcache = {version = "*", optional = true}
+redis_rs = { version = "0.15.1", optional = true, package = "redis" }
+backoff = { version = "0.1.6", optional = true }
+memcache = { version = "*", optional = true }
 
 [dev-dependencies]
 actix-rt = "1.1.1"
