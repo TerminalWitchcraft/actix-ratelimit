@@ -94,7 +94,7 @@ more details and a basic example.
 
 ## Note to developers
 
-* To use redis store, put this to your Cargo.toml:
+* To use redis store, put this in your Cargo.toml:
 ```toml
 [dependencies]
 actix-ratelimit = {version = "0.3.0", default-features = false, features = ["redis-store"]}
@@ -129,6 +129,8 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 ```
+
+* The memcache store uses a separate key to keep track of expiry since there's no way to get ttl of keys in memcache natively yet. This means memcache store will use double the number of keys as compared to redis store. If there's any better way to do this, please considering opening an issue!
 
 * It is **important** to initialize store before creating HttpServer instance, or else a store
 will be created for each web worker. This may lead to instability and inconsistency! For
