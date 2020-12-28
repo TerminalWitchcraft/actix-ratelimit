@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/actix-ratelimit/0.2.1")]
+#![doc(html_root_url = "https://docs.rs/actix-ratelimit/0.3.0")]
 //! Rate limiting middleware framework for [actix-web](https://actix.rs/)
 //!
 //! This crate provides an asynchronous and concurrent rate limiting middleware based on [actor](https://www.wikiwand.com/en/Actor_model)
