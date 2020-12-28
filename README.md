@@ -89,8 +89,8 @@ note that there are multiple store actors acting on a _single_ store.
 
 ## Implementing your own store
 
-To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.2.1/actix_ratelimit/enum.ActorMessage.html) type
-and return [ActorResponse](https://docs.rs/actix-ratelimit/0.2.1/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.2.1/actix_ratelimit/stores/index.html) for
+To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.3.0/actix_ratelimit/enum.ActorMessage.html) type
+and return [ActorResponse](https://docs.rs/actix-ratelimit/0.3.0/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.3.0/actix_ratelimit/stores/index.html) for
 more details and a basic example.
 
 ## Note to developers
@@ -102,7 +102,7 @@ actix-ratelimit = {version = "0.3.0", default-features = false, features = ["red
 ```
 
 * By default, the client's IP address is used as the identifier which can be customized
-using [ServiceRequest](https://docs.rs/actix-web/2.0.0/actix_web/dev/struct.ServiceRequest.html) instance.
+using [ServiceRequest](https://docs.rs/actix-web/3.3.2/actix_web/dev/struct.ServiceRequest.html) instance.
 For example, using api key header to identify client:
 ```rust
 #[actix_web::main]

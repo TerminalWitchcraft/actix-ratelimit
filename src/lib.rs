@@ -96,11 +96,11 @@
 //! * To use redis store, put this to your Cargo.toml:
 //! ```toml
 //! [dependencies]
-//! actix-ratelimit = {version = "0.2.1", default-features = false, features = ["redis-store"]}
+//! actix-ratelimit = {version = "0.3.0", default-features = false, features = ["redis-store"]}
 //! ```
 //!
 //! * By default, the client's IP address is used as the identifier which can be customized
-//! using [ServiceRequest](https://docs.rs/actix-web/2.0.0/actix_web/dev/struct.ServiceRequest.html) instance.
+//! using [ServiceRequest](https://docs.rs/actix-web/3.3.2/actix_web/dev/struct.ServiceRequest.html) instance.
 //! For example, using api key header to identify client:
 //! ```rust
 //! # #[cfg(feature = "default")] {
