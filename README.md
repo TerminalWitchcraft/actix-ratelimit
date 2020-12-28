@@ -81,10 +81,10 @@ responsible for performiing all sorts of operations(SET, GET, DEL, etc). It is I
 note that there are multiple store actors acting on a _single_ store.
 
 
-### Supported
-- In-memory (based on concurrent [hashmap](https://github.com/xacrimon/dashmap))
-- Redis (based on [redis-rs](https://github.com/mitsuhiko/redis-rs))
-- Memcached(see note to developers below)
+### List of features
+- `memory` (in-memory store based on concurrent [hashmap](https://github.com/xacrimon/dashmap))
+- `redis-store` (based on [redis-rs](https://github.com/mitsuhiko/redis-rs))
+- `memcached` (based on [r2d2-memcache](https://github.com/megumish/r2d2-memcache), see note to developers below)
 
 
 ## Implementing your own store
@@ -95,7 +95,7 @@ more details and a basic example.
 
 ## Note to developers
 
-* To use redis store, put this in your Cargo.toml:
+* By default, all features are enabled. To use a particular feature, for instance redis, put this in your Cargo.toml:
 ```toml
 [dependencies]
 actix-ratelimit = {version = "0.3.0", default-features = false, features = ["redis-store"]}

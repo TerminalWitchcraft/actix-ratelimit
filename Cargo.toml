@@ -17,7 +17,8 @@ travis-ci = { repository = "TerminalWitchcraft/actix-ratelimit", branch = "maste
 
 [features]
 
-default = ["dashmap"]
+default = ["memory", "redis-store", "memcached"]
+memory = ["dashmap"]
 redis-store = ["redis_rs", "backoff"]
 memcached = ["r2d2-memcache", "backoff"]
 
