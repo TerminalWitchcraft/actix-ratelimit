@@ -10,7 +10,7 @@ identify client request.
 
 Check out the [documentation here](https://docs.rs/actix-ratelimit/).
 
-Comments, suggesstions and critiques are welcomed!
+Comments, suggesstions and critiques are welcome!
 
 ## Usage
 Add this to your Cargo.toml:
@@ -18,6 +18,8 @@ Add this to your Cargo.toml:
 [dependencies]
 actix-ratelimit = "0.3.0"
 ```
+
+Version `0.3.*` supports actix-web v3. If you're using actix-web v2, consider using version `0.2.*`.
 
 Minimal example:
 
@@ -82,9 +84,8 @@ note that there are multiple store actors acting on a _single_ store.
 ### Supported
 - In-memory (based on concurrent [hashmap](https://github.com/xacrimon/dashmap))
 - Redis (based on [redis-rs](https://github.com/mitsuhiko/redis-rs))
+- Memcached(see note to developers below)
 
-### Planned
-- Memcached (not yet implemented)
 
 ## Implementing your own store
 
@@ -155,9 +156,7 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-* The exception is redis, where multiple connections will be
-created for each worker. Since redis store is based on Multiplexed connection, sharing once
-connection across multiple store actors should suffice for most use cases.
+* To enable ratelimiting across multiple instances of your web application(multiple http servers behind load balancer), consider using a feature called `session stickiness` supported by popular cloud services such as AWS, Azure, etc.
 
 
 ## Status
