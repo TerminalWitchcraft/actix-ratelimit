@@ -147,6 +147,7 @@ impl From<Addr<MemcacheStore>> for MemcacheStoreActor {
 }
 
 impl MemcacheStoreActor {
+    /// Starts the memcached store actor and returns it's address
     pub fn start(self) -> Addr<Self> {
         debug!("Started memcache actor");
         Supervisor::start(|_| self)

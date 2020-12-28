@@ -13,7 +13,7 @@
 //! Add this to your Cargo.toml:
 //! ```toml
 //! [dependencies]
-//! actix-ratelimit = "0.2.1"
+//! actix-ratelimit = "0.3.0"
 //! ```
 //!
 //! Minimal example:
@@ -190,12 +190,12 @@ pub mod stores;
 use errors::ARError;
 pub use middleware::RateLimiter;
 
-#[cfg(feature = "default")]
+#[cfg(feature = "memory")]
 pub use stores::memory::{MemoryStore, MemoryStoreActor};
 #[cfg(feature = "redis-store")]
 pub use stores::redis::{RedisStore, RedisStoreActor};
 #[cfg(feature = "memcached")]
-pub use stores::memcached::{MemcacheStore};
+pub use stores::memcached::{MemcacheStore, MemcacheStoreActor};
 
 use std::future::Future;
 use std::marker::Send;
