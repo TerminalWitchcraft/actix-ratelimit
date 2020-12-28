@@ -8,6 +8,7 @@ matrix:
     - rust: nightly
 services:
   - redis-server
+  - memcached
 script:
   - cargo build --verbose --all-features
   - cargo test --verbose --all-features
