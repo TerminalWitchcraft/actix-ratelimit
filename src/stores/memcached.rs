@@ -203,10 +203,8 @@ impl Handler<ActorMessage> for MemcacheStoreActor {
                         match result {
                             Ok(c) => match c {
                                 Some(v) => Ok(Some(v as usize)),
-                                None => {
-                                    Err(ARError::ReadWriteError("error: key not found".to_owned()))
-                                }
-                            },
+                                None => Ok(None),
+                            }
                             Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
                         }
                     })),
