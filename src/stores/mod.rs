@@ -79,7 +79,7 @@
 //!
 //! The above example is not thread-safe and does not implement key expiration! It's just for demonstration purposes.
 
-#[cfg(feature = "default")]
+#[cfg(feature = "memory")]
 pub mod memory;
 
 #[cfg(feature = "redis-store")]
