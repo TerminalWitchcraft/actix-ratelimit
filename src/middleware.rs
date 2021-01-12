@@ -3,6 +3,7 @@ use actix::dev::*;
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     error::Error as AWError,
+    error::ErrorInternalServerError,
     http::{HeaderName, HeaderValue},
     HttpResponse,
 };
@@ -97,7 +98,7 @@ where
     }
 }
 
-impl<T, S, B> Transform<S> for RateLimiter<T>
+impl<T, S, B> Transform<S, ServiceRequest> for RateLimiter<T>
 where
     T: Handler<ActorMessage> + Send + Sync + 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
@@ -136,7 +137,7 @@ where
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, ARError> + 'static>>,
 }
 
-impl<T, S, B> Service for RateLimitMiddleware<S, T>
+impl<T, S, B> Service<ServiceRequest> for RateLimitMiddleware<S, T>
 where
     T: Handler<ActorMessage> + 'static,
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
@@ -162,7 +163,7 @@ where
             let identifier: String = (identifier)(&req)?;
             let remaining: ActorResponse = store
                 .send(ActorMessage::Get(String::from(&identifier)))
-                .await?;
+                .await.map_err(ErrorInternalServerError)?;
             match remaining {
                 ActorResponse::Get(opt) => {
                     let opt = opt.await?;
@@ -170,7 +171,7 @@ where
                         // Existing entry in store
                         let expiry = store
                             .send(ActorMessage::Expire(String::from(&identifier)))
-                            .await?;
+                            .await.map_err(ErrorInternalServerError)?;
                         let reset: Duration = match expiry {
                             ActorResponse::Expire(dur) => dur.await?,
                             _ => unreachable!(),
@@ -190,7 +191,7 @@ where
                                     key: identifier,
                                     value: 1,
                                 })
-                                .await?;
+                                .await.map_err(ErrorInternalServerError)?;
                             let updated_value: usize = match res {
                                 ActorResponse::Update(c) => c.await?,
                                 _ => unreachable!(),
@@ -223,7 +224,7 @@ where
                                 value: current_value,
                                 expiry: interval,
                             })
-                            .await?;
+                            .await.map_err(ErrorInternalServerError)?;
                         match res {
                             ActorResponse::Set(c) => c.await?,
                             _ => unreachable!(),
