@@ -97,15 +97,14 @@ where
     }
 }
 
-impl<T, S, B> Transform<S> for RateLimiter<T>
+impl<T, S, B> Transform<S, ServiceRequest> for RateLimiter<T>
 where
     T: Handler<ActorMessage> + Send + Sync + 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type InitError = ();
@@ -137,15 +136,14 @@ where
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, ARError> + 'static>>,
 }
 
-impl<T, S, B> Service for RateLimitMiddleware<S, T>
+impl<T, S, B> Service<ServiceRequest> for RateLimitMiddleware<S, T>
 where
     T: Handler<ActorMessage> + 'static,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
@@ -162,20 +160,25 @@ where
         let identifier = self.identifier.clone();
         Box::pin(async move {
             let identifier: String = (identifier)(&req)?;
-            let remaining: ActorResponse = store
+            let remaining: ActorResponse = match store
                 .send(ActorMessage::Get(String::from(&identifier)))
-                .await?;
+                .await {
+                Ok(r) => r,
+                Err(_) => panic!("doh")
+            };
             match remaining {
                 ActorResponse::Get(opt) => {
                     let opt = opt.await?;
                     if let Some(c) = opt {
                         // Existing entry in store
-                        let expiry = store
+                        let reset: Duration = match store
                             .send(ActorMessage::Expire(String::from(&identifier)))
-                            .await?;
-                        let reset: Duration = match expiry {
-                            ActorResponse::Expire(dur) => dur.await?,
-                            _ => unreachable!(),
+                            .await {
+                            Ok(a) => match a {
+                                ActorResponse::Expire(dur) => dur.await?,
+                                _ => unreachable!(),
+                            }
+                            Err(_) => panic!("doh")
                         };
                         if c == 0 {
                             info!("Limit exceeded for client: {}", &identifier);
@@ -187,16 +190,19 @@ where
                             Err(response.into())
                         } else {
                             // Decrement value
-                            let res: ActorResponse = store
+                            let updated_value: usize = match store
                                 .send(ActorMessage::Update {
                                     key: identifier,
                                     value: 1,
                                 })
-                                .await?;
-                            let updated_value: usize = match res {
-                                ActorResponse::Update(c) => c.await?,
-                                _ => unreachable!(),
+                                .await {
+                                Ok(res) => match res {
+                                    ActorResponse::Update(c) => c.await?,
+                                    _ => unreachable!(),
+                                }
+                                Err(_) => panic!("doh")
                             };
+
                             // Execute the request
                             let fut = srv.call(req);
                             let mut res = fut.await?;
@@ -219,17 +225,19 @@ where
                     } else {
                         // New client, create entry in store
                         let current_value = max_requests - 1;
-                        let res = store
+                        match store
                             .send(ActorMessage::Set {
                                 key: String::from(&identifier),
                                 value: current_value,
                                 expiry: interval,
                             })
-                            .await?;
-                        match res {
-                            ActorResponse::Set(c) => c.await?,
-                            _ => unreachable!(),
-                        }
+                            .await {
+                            Ok(res) => match res {
+                                ActorResponse::Set(c) => c.await?,
+                                _ => unreachable!(),
+                            }
+                            Err(_) => panic!("doh")
+                        };
                         let fut = srv.call(req);
                         let mut res = fut.await?;
                         let headers = res.headers_mut();
