@@ -16,7 +16,7 @@ Comments, suggesstions and critiques are welcome!
 Add this to your Cargo.toml:
 ```toml
 [dependencies]
-actix-ratelimit = "0.3.0"
+actix-ratelimit = "0.3.1"
 ```
 
 Version `0.3.*` supports actix-web v3. If you're using actix-web v2, consider using version `0.2.*`.
@@ -89,8 +89,8 @@ note that there are multiple store actors acting on a _single_ store.
 
 ## Implementing your own store
 
-To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.3.0/actix_ratelimit/enum.ActorMessage.html) type
-and return [ActorResponse](https://docs.rs/actix-ratelimit/0.3.0/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.3.0/actix_ratelimit/stores/index.html) for
+To implement your own store, you have to implement an [Actor](https://actix.rs/actix/actix/trait.Actor.html) which can handle [ActorMessage](https://docs.rs/actix-ratelimit/0.3.1/actix_ratelimit/enum.ActorMessage.html) type
+and return [ActorResponse](https://docs.rs/actix-ratelimit/0.3.1/actix_ratelimit/enum.ActorResponse.html) type. Check the [module level documentation](https://docs.rs/actix-ratelimit/0.3.1/actix_ratelimit/stores/index.html) for
 more details and a basic example.
 
 ## Note to developers
@@ -98,7 +98,7 @@ more details and a basic example.
 * By default, all features are enabled. To use a particular feature, for instance redis, put this in your Cargo.toml:
 ```toml
 [dependencies]
-actix-ratelimit = {version = "0.3.0", default-features = false, features = ["redis-store"]}
+actix-ratelimit = {version = "0.3.1", default-features = false, features = ["redis-store"]}
 ```
 
 * By default, the client's IP address is used as the identifier which can be customized
