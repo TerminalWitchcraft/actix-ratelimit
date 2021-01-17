@@ -166,7 +166,7 @@ impl Handler<ActorMessage> for MemcacheStoreActor {
     fn handle(&mut self, msg: ActorMessage, ctx: &mut Self::Context) -> Self::Result {
         let pool = self.inner.clone();
         if let Some(p) = pool {
-            if let Ok(mut client) = p.get() {
+            if let Ok(client) = p.get() {
                 match msg {
                     ActorMessage::Set { key, value, expiry } => {
                         ActorResponse::Set(Box::pin(async move {
