@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/actix-ratelimit/0.3.0")]
+#![doc(html_root_url = "https://docs.rs/actix-ratelimit/0.3.1")]
 //! Rate limiting middleware framework for [actix-web](https://actix.rs/)
 //!
 //! This crate provides an asynchronous and concurrent rate limiting middleware based on [actor](https://www.wikiwand.com/en/Actor_model)
@@ -13,7 +13,7 @@
 //! Add this to your Cargo.toml:
 //! ```toml
 //! [dependencies]
-//! actix-ratelimit = "0.3.0"
+//! actix-ratelimit = "0.3.1"
 //! ```
 //!
 //! Minimal example:
@@ -96,7 +96,7 @@
 //! * To use redis store, put this to your Cargo.toml:
 //! ```toml
 //! [dependencies]
-//! actix-ratelimit = {version = "0.3.0", default-features = false, features = ["redis-store"]}
+//! actix-ratelimit = {version = "0.3.1", default-features = false, features = ["redis-store"]}
 //! ```
 //!
 //! * By default, the client's IP address is used as the identifier which can be customized
