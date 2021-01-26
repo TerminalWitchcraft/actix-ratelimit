@@ -26,7 +26,7 @@ memcached = ["r2d2-memcache", "backoff"]
 log = "0.4.11"
 actix-web = {version = "4.0.0-beta.1"}
 actix-http = {version = "3.0.0-beta.1", features=["actors"]}
-actix = "0.10"
+actix = "0.11.0-beta.1"
 futures = "0.3.8"
 failure = "0.1.8"
 
