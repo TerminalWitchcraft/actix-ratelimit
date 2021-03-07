@@ -24,9 +24,9 @@ memcached = ["r2d2-memcache", "backoff"]
 
 [dependencies]
 log = "0.4.11"
-actix-web = {version = "3.3.2"}
-actix-http = {version = "2.2.0", features=["actors"]}
-actix = "0.10"
+actix-web = {version = "4.0.0-beta.1"}
+actix-http = {version = "3.0.0-beta.1", features=["actors"]}
+actix = "0.11.0-beta.1"
 futures = "0.3.8"
 failure = "0.1.8"
 
@@ -37,6 +37,6 @@ backoff = {version = "0.2.1", optional = true}
 r2d2-memcache = { version = "0.6", optional = true }
 
 [dev-dependencies]
-actix-rt = "1.1.1"
+actix-rt = "2.0.0-beta.2"
 env_logger = "0.8.2"
 version-sync = "0.9.1"
