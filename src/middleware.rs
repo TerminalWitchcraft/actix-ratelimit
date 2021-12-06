@@ -3,6 +3,7 @@ use actix::dev::*;
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     error::Error as AWError,
+    error::ErrorInternalServerError,
     http::{HeaderName, HeaderValue},
     HttpResponse,
 };
@@ -97,15 +98,14 @@ where
     }
 }
 
-impl<T, S, B> Transform<S> for RateLimiter<T>
+impl<T, S, B> Transform<S, ServiceRequest> for RateLimiter<T>
 where
     T: Handler<ActorMessage> + Send + Sync + 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type InitError = ();
@@ -137,15 +137,14 @@ where
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, ARError> + 'static>>,
 }
 
-impl<T, S, B> Service for RateLimitMiddleware<S, T>
+impl<T, S, B> Service<ServiceRequest> for RateLimitMiddleware<S, T>
 where
     T: Handler<ActorMessage> + 'static,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
@@ -162,17 +161,17 @@ where
         let identifier = self.identifier.clone();
         Box::pin(async move {
             let identifier: String = (identifier)(&req)?;
-            let remaining: ActorResponse = store
+            let remaining: ActorResponse = match store
                 .send(ActorMessage::Get(String::from(&identifier)))
-                .await?;
+                .await.map_err(ErrorInternalServerError)?;
             match remaining {
                 ActorResponse::Get(opt) => {
                     let opt = opt.await?;
                     if let Some(c) = opt {
                         // Existing entry in store
-                        let expiry = store
+                        let reset: Duration = match store
                             .send(ActorMessage::Expire(String::from(&identifier)))
-                            .await?;
+                            .await.map_err(ErrorInternalServerError)?;
                         let reset: Duration = match expiry {
                             ActorResponse::Expire(dur) => dur.await?,
                             _ => unreachable!(),
@@ -187,16 +186,17 @@ where
                             Err(response.into())
                         } else {
                             // Decrement value
-                            let res: ActorResponse = store
+                            let updated_value: usize = match store
                                 .send(ActorMessage::Update {
                                     key: identifier,
                                     value: 1,
                                 })
-                                .await?;
+                                .await.map_err(ErrorInternalServerError)?;
                             let updated_value: usize = match res {
                                 ActorResponse::Update(c) => c.await?,
                                 _ => unreachable!(),
                             };
+
                             // Execute the request
                             let fut = srv.call(req);
                             let mut res = fut.await?;
@@ -219,13 +219,13 @@ where
                     } else {
                         // New client, create entry in store
                         let current_value = max_requests - 1;
-                        let res = store
+                        match store
                             .send(ActorMessage::Set {
                                 key: String::from(&identifier),
                                 value: current_value,
                                 expiry: interval,
                             })
-                            .await?;
+                            .await.map_err(ErrorInternalServerError)?;
                         match res {
                             ActorResponse::Set(c) => c.await?,
                             _ => unreachable!(),
