@@ -161,7 +161,7 @@ where
         let identifier = self.identifier.clone();
         Box::pin(async move {
             let identifier: String = (identifier)(&req)?;
-            let remaining: ActorResponse = store
+            let remaining: ActorResponse = match store
                 .send(ActorMessage::Get(String::from(&identifier)))
                 .await.map_err(ErrorInternalServerError)?;
             match remaining {
@@ -169,7 +169,7 @@ where
                     let opt = opt.await?;
                     if let Some(c) = opt {
                         // Existing entry in store
-                        let expiry = store
+                        let reset: Duration = match store
                             .send(ActorMessage::Expire(String::from(&identifier)))
                             .await.map_err(ErrorInternalServerError)?;
                         let reset: Duration = match expiry {
@@ -186,7 +186,7 @@ where
                             Err(response.into())
                         } else {
                             // Decrement value
-                            let res: ActorResponse = store
+                            let updated_value: usize = match store
                                 .send(ActorMessage::Update {
                                     key: identifier,
                                     value: 1,
@@ -196,6 +196,7 @@ where
                                 ActorResponse::Update(c) => c.await?,
                                 _ => unreachable!(),
                             };
+
                             // Execute the request
                             let fut = srv.call(req);
                             let mut res = fut.await?;
@@ -218,7 +219,7 @@ where
                     } else {
                         // New client, create entry in store
                         let current_value = max_requests - 1;
-                        let res = store
+                        match store
                             .send(ActorMessage::Set {
                                 key: String::from(&identifier),
                                 value: current_value,
