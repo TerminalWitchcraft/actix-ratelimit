@@ -1,9 +1,9 @@
 //! RateLimiter middleware for actix application
-use actix::dev::*;
+use actix::{dev::*, fut::{future::Timeout, ready}};
 use actix_web::{
-    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    dev::{Service, ServiceRequest, ServiceResponse, Transform, ServiceFactory},
     error::Error as AWError,
-    http::{HeaderName, HeaderValue},
+    http::header::{HeaderName, HeaderValue},
     HttpResponse,
 };
 use futures::future::{ok, Ready};
@@ -97,29 +97,21 @@ where
     }
 }
 
-impl<T, S, B> Transform<S> for RateLimiter<T>
-where
-    T: Handler<ActorMessage> + Send + Sync + 'static,
-    T::Context: ToEnvelope<T, ActorMessage>,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Request = ServiceRequest;
-    type Response = ServiceResponse<B>;
+impl<T, S: Service<Req>, Req> Transform<S, Req> for RateLimiter<T> {
+    type Response = S::Response;
     type Error = S::Error;
-    type InitError = ();
-    type Transform = RateLimitMiddleware<S, T>;
+    type InitError = S::Error;
+    type Transform = Timeout<S>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(RateLimitMiddleware {
-            service: Rc::new(RefCell::new(service)),
+        ready(Ok(RateLimitMiddleware {
+            service,
             store: self.store.clone(),
             max_requests: self.max_requests,
             interval: self.interval.as_secs(),
             identifier: self.identifier.clone(),
-        })
+        }))
     }
 }
 
