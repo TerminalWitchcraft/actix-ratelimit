@@ -183,7 +183,7 @@ where
                                         "x-ratelimit-reset",
                                         reset.as_secs().to_string(),
                                     ))
-                                    .finish(),
+                                    .finish()
                             ))
                         } else {
                             // Decrement value
