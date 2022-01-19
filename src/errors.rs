@@ -1,6 +1,5 @@
 //! Errors that can occur during middleware processing stage
-use actix_web::error::Error as AWError;
-use actix_web::web::HttpResponse;
+use actix_web::error::{Error as AWError, self};
 use thiserror::Error;
 use log::*;
 
@@ -34,6 +33,6 @@ pub enum ARError {
 impl From<ARError> for AWError {
     fn from(err: ARError) -> Self {
             error!("{}", &err);
-            HttpResponse::InternalServerError().into()
+            error::ErrorInternalServerError(err)
     }
 }
