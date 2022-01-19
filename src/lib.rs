@@ -248,7 +248,7 @@ where
     A: Actor,
     M: actix::Message<Result = ActorResponse>,
 {
-    fn handle<R: ResponseChannel<M>>(self, _: &mut A::Context, tx: Option<R>) {
+    fn handle(self, ctx: &mut A::Context, tx: Option<OneshotSender<M::Result>>) {
         if let Some(tx) = tx {
             tx.send(self);
         }

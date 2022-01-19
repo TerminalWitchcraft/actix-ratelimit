@@ -1,22 +1,18 @@
 //! RateLimiter middleware for actix application
-use actix::{dev::*, fut::{future::Timeout, ready}};
+use actix::{
+    dev::*,
+    fut::ready,
+};
 use actix_web::{
-    dev::{Service, ServiceRequest, ServiceResponse, Transform, ServiceFactory},
-    error::Error as AWError,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    error::{Error as AWError, ErrorInternalServerError},
     http::header::{HeaderName, HeaderValue},
     HttpResponse,
 };
-use futures::future::{ok, Ready};
+use futures::task::Poll;
+use futures::{future::Ready, Future};
 use log::*;
-use std::{
-    cell::RefCell,
-    future::Future,
-    ops::Fn,
-    pin::Pin,
-    rc::Rc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{cell::RefCell, pin::Pin, rc::Rc, time::Duration};
 
 use crate::{errors::ARError, ActorMessage, ActorResponse};
 
@@ -63,7 +59,7 @@ where
         let identifier = |req: &ServiceRequest| {
             let connection_info = req.connection_info();
             let ip = connection_info
-                .remote_addr()
+                .peer_addr()
                 .ok_or(ARError::IdentificationError)?;
             Ok(String::from(ip))
         };
@@ -97,16 +93,23 @@ where
     }
 }
 
-impl<T, S: Service<Req>, Req> Transform<S, Req> for RateLimiter<T> {
-    type Response = S::Response;
+impl<T, S, B> Transform<S, ServiceRequest> for RateLimiter<T>
+where
+    T: Handler<ActorMessage> + Send + Sync + 'static,
+    T::Context: ToEnvelope<T, ActorMessage>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
     type Error = S::Error;
-    type InitError = S::Error;
-    type Transform = Timeout<S>;
+    type InitError = ();
+    type Transform = RateLimitMiddleware<S, T>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(RateLimitMiddleware {
-            service,
+            service: Rc::new(RefCell::new(service)),
             store: self.store.clone(),
             max_requests: self.max_requests,
             interval: self.interval.as_secs(),
@@ -129,24 +132,23 @@ where
     identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, ARError> + 'static>>,
 }
 
-impl<T, S, B> Service for RateLimitMiddleware<S, T>
+impl<T, S, B> Service<ServiceRequest> for RateLimitMiddleware<S, T>
 where
     T: Handler<ActorMessage> + 'static,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(self: &RateLimitMiddleware<S, T>, cx: &mut core::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.borrow_mut().poll_ready(cx)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+    fn call(self: &RateLimitMiddleware<S, T>, req: ServiceRequest) -> Self::Future {
         let store = self.store.clone();
         let mut srv = self.service.clone();
         let max_requests = self.max_requests;
@@ -156,7 +158,7 @@ where
             let identifier: String = (identifier)(&req)?;
             let remaining: ActorResponse = store
                 .send(ActorMessage::Get(String::from(&identifier)))
-                .await?;
+                .await.map_err(ErrorInternalServerError)?;
             match remaining {
                 ActorResponse::Get(opt) => {
                     let opt = opt.await?;
@@ -164,7 +166,7 @@ where
                         // Existing entry in store
                         let expiry = store
                             .send(ActorMessage::Expire(String::from(&identifier)))
-                            .await?;
+                            .await.map_err(ErrorInternalServerError)?;
                         let reset: Duration = match expiry {
                             ActorResponse::Expire(dur) => dur.await?,
                             _ => unreachable!(),
@@ -173,9 +175,9 @@ where
                             info!("Limit exceeded for client: {}", &identifier);
                             let mut response = HttpResponse::TooManyRequests();
                             // let mut response = (error_callback)(&mut response);
-                            response.set_header("x-ratelimit-limit", max_requests.to_string());
-                            response.set_header("x-ratelimit-remaining", c.to_string());
-                            response.set_header("x-ratelimit-reset", reset.as_secs().to_string());
+                            response.insert_header(("x-ratelimit-limit", max_requests.to_string()));
+                            response.insert_header(("x-ratelimit-remaining", c.to_string()));
+                            response.insert_header(("x-ratelimit-reset", reset.as_secs().to_string()));
                             Err(response.into())
                         } else {
                             // Decrement value
@@ -184,7 +186,7 @@ where
                                     key: identifier,
                                     value: 1,
                                 })
-                                .await?;
+                                .await.map_err(ErrorInternalServerError)?;
                             let updated_value: usize = match res {
                                 ActorResponse::Update(c) => c.await?,
                                 _ => unreachable!(),
@@ -217,7 +219,7 @@ where
                                 value: current_value,
                                 expiry: interval,
                             })
-                            .await?;
+                            .await.map_err(ErrorInternalServerError)?;
                         match res {
                             ActorResponse::Set(c) => c.await?,
                             _ => unreachable!(),
