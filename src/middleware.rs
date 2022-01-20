@@ -1,10 +1,10 @@
 //! RateLimiter middleware for actix application
-use actix::{dev::*, fut::ready};
+use actix::{dev::*, fut::{ready, ok}};
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     error::{self, Error as AWError, ErrorInternalServerError, ErrorTooManyRequests},
     http::header::{HeaderName, HeaderValue},
-    HttpResponse,
+    HttpResponse, Either,
 };
 use futures::task::Poll;
 use futures::{future::Ready, Future};
@@ -175,7 +175,7 @@ where
                         };
                         if c <= 0 {
                             info!("Limit exceeded for client: {}", &identifier);
-                            Ok(req.into_response(
+                            Either::Right(ok(req.into_response(
                                 HttpResponse::TooManyRequests()
                                     .insert_header(("x-ratelimit-limit", max_requests.to_string()))
                                     .insert_header(("x-ratelimit-remaining", c.to_string()))
@@ -184,7 +184,7 @@ where
                                         reset.as_secs().to_string(),
                                     ))
                                     .finish(),
-                            ))
+                            )))
                         } else {
                             // Decrement value
                             let res: ActorResponse = store
@@ -200,7 +200,8 @@ where
                             };
                             // Execute the request
                             let fut = srv.call(req);
-                            let mut res = fut.await?;
+                            let mut res = fut.await;
+                            
                             let headers = res.headers_mut();
                             // Safe unwraps, since usize is always convertible to string
                             headers.insert(
@@ -215,7 +216,7 @@ where
                                 HeaderName::from_static("x-ratelimit-reset"),
                                 HeaderValue::from_str(reset.as_secs().to_string().as_str())?,
                             );
-                            Ok(res)
+                            Either::Left(res)
                         }
                     } else {
                         // New client, create entry in store
@@ -248,7 +249,7 @@ where
                             HeaderName::from_static("x-ratelimit-reset"),
                             HeaderValue::from_str(interval.as_secs().to_string().as_str()).unwrap(),
                         );
-                        Ok(res)
+                        Either::Left(res)
                     }
                 }
                 _ => {
