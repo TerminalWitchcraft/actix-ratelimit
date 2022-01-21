@@ -188,6 +188,7 @@ pub mod errors;
 pub mod middleware;
 pub mod stores;
 use errors::ARError;
+use log::error;
 pub use middleware::RateLimiter;
 
 #[cfg(feature = "memory")]
@@ -248,9 +249,11 @@ where
     A: Actor,
     M: actix::Message<Result = ActorResponse>,
 {
-    fn handle(self, ctx: &mut A::Context, tx: Option<OneshotSender<M::Result>>) {
+    fn handle(self, _ctx: &mut A::Context, tx: Option<OneshotSender<M::Result>>) {
         if let Some(tx) = tx {
-            tx.send(self);
+            if let Err(_) = tx.send(self) {
+                error!("the receiver dropped");
+            }
         }
     }
 }
