@@ -188,14 +188,15 @@ pub mod errors;
 pub mod middleware;
 pub mod stores;
 use errors::ARError;
+use log::error;
 pub use middleware::RateLimiter;
 
+#[cfg(feature = "memcached")]
+pub use stores::memcached::{MemcacheStore, MemcacheStoreActor};
 #[cfg(feature = "memory")]
 pub use stores::memory::{MemoryStore, MemoryStoreActor};
 #[cfg(feature = "redis-store")]
 pub use stores::redis::{RedisStore, RedisStoreActor};
-#[cfg(feature = "memcached")]
-pub use stores::memcached::{MemcacheStore, MemcacheStoreActor};
 
 use std::future::Future;
 use std::marker::Send;
@@ -248,9 +249,11 @@ where
     A: Actor,
     M: actix::Message<Result = ActorResponse>,
 {
-    fn handle<R: ResponseChannel<M>>(self, _: &mut A::Context, tx: Option<R>) {
+    fn handle(self, _ctx: &mut A::Context, tx: Option<OneshotSender<M::Result>>) {
         if let Some(tx) = tx {
-            tx.send(self);
+            if let Err(_) = tx.send(self) {
+                error!("the receiver dropped");
+            }
         }
     }
 }
