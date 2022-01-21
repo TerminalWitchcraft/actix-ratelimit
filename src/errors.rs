@@ -1,13 +1,13 @@
 //! Errors that can occur during middleware processing stage
-use actix_web::error::{Error as AWError, self};
-use thiserror::Error;
+use actix_web::error::{self, Error as AWError};
 use log::*;
+use thiserror::Error;
 
 /// Custom error type. Useful for logging and debugging different kinds of errors.
 /// This type can be converted to Actix Error, which defaults to
 /// InternalServerError
 ///
-#[derive(Error,Debug)]
+#[derive(Error, Debug)]
 pub enum ARError {
     /// Store is not connected
     #[error("store not connected")]
@@ -32,7 +32,7 @@ pub enum ARError {
 
 impl From<ARError> for AWError {
     fn from(err: ARError) -> Self {
-            error!("{}", &err);
-            error::ErrorInternalServerError(err)
+        error!("{}", &err);
+        error::ErrorInternalServerError(err)
     }
 }

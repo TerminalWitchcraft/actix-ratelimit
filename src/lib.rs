@@ -191,12 +191,12 @@ use errors::ARError;
 use log::error;
 pub use middleware::RateLimiter;
 
+#[cfg(feature = "memcached")]
+pub use stores::memcached::{MemcacheStore, MemcacheStoreActor};
 #[cfg(feature = "memory")]
 pub use stores::memory::{MemoryStore, MemoryStoreActor};
 #[cfg(feature = "redis-store")]
 pub use stores::redis::{RedisStore, RedisStoreActor};
-#[cfg(feature = "memcached")]
-pub use stores::memcached::{MemcacheStore, MemcacheStoreActor};
 
 use std::future::Future;
 use std::marker::Send;

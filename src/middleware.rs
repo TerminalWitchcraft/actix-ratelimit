@@ -1,12 +1,15 @@
 //! RateLimiter middleware for actix application
-use actix::{dev::*};
+use actix::dev::*;
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     error::{self, Error as AWError, ErrorInternalServerError},
     http::header::{HeaderName, HeaderValue},
 };
 use futures::task::Poll;
-use futures::{future::{ok,Ready}, Future};
+use futures::{
+    future::{ok, Ready},
+    Future,
+};
 use log::*;
 use std::{cell::RefCell, pin::Pin, rc::Rc, time::Duration};
 
@@ -187,7 +190,7 @@ where
                                 HeaderName::from_static("x-ratelimit-reset"),
                                 HeaderValue::from_str(reset.as_secs().to_string().as_str())?,
                             );
-                        
+
                             Err(err)
                         } else {
                             // Decrement value
@@ -205,7 +208,7 @@ where
                             // Execute the request
                             let fut = srv.call(req);
                             let mut res = fut.await?;
-                            
+
                             let headers = res.headers_mut();
                             // Safe unwraps, since usize is always convertible to string
                             headers.insert(
