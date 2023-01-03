@@ -24,14 +24,11 @@ memcached = ["r2d2-memcache", "backoff"]
 
 [dependencies]
 log = "0.4.11"
-actix-web = {version = "3.3.2"}
-actix-http = {version = "2.2.0", features=["actors"]}
-actix = "0.10"
+actix = "0.13.0"
+actix-web = {version = "4.2.1"}
 futures = "0.3.8"
 failure = "0.1.8"
-
 dashmap = {version = "4.0.1", optional = true}
-
 redis_rs = {version = "0.15.1", optional = true, package= "redis"}
 backoff = {version = "0.2.1", optional = true}
 r2d2-memcache = { version = "0.6", optional = true }

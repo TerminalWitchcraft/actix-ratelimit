@@ -2,9 +2,8 @@
 use actix::dev::*;
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
-    error::Error as AWError,
-    http::{HeaderName, HeaderValue},
-    HttpResponse,
+    error::{Error as AWError, ErrorInternalServerError},
+    http::header::{HeaderName, HeaderValue},
 };
 use futures::future::{ok, Ready};
 use log::*;
@@ -50,7 +49,7 @@ where
     interval: Duration,
     max_requests: usize,
     store: Addr<T>,
-    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, ARError>>>,
+    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, AWError>>>,
 }
 
 impl<T> RateLimiter<T>
@@ -63,8 +62,9 @@ where
         let identifier = |req: &ServiceRequest| {
             let connection_info = req.connection_info();
             let ip = connection_info
-                .remote_addr()
-                .ok_or(ARError::IdentificationError)?;
+                .peer_addr()
+                .ok_or(ARError::IdentificationError)
+                .map_err(ErrorInternalServerError)?;
             Ok(String::from(ip))
         };
         RateLimiter {
@@ -88,7 +88,7 @@ where
     }
 
     /// Function to get the identifier for the client request
-    pub fn with_identifier<F: Fn(&ServiceRequest) -> Result<String, ARError> + 'static>(
+    pub fn with_identifier<F: Fn(&ServiceRequest) -> Result<String, AWError> + 'static>(
         mut self,
         identifier: F,
     ) -> Self {
@@ -97,15 +97,14 @@ where
     }
 }
 
-impl<T, S, B> Transform<S> for RateLimiter<T>
+impl<T, S, B> Transform<S, ServiceRequest> for RateLimiter<T>
 where
     T: Handler<ActorMessage> + Send + Sync + 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type InitError = ();
@@ -134,37 +133,37 @@ where
     // Exists here for the sole purpose of knowing the max_requests and interval from RateLimiter
     max_requests: usize,
     interval: u64,
-    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, ARError> + 'static>>,
+    identifier: Rc<Box<dyn Fn(&ServiceRequest) -> Result<String, AWError> + 'static>>,
 }
 
-impl<T, S, B> Service for RateLimitMiddleware<S, T>
+impl<T, S, B> Service<ServiceRequest> for RateLimitMiddleware<S, T>
 where
     T: Handler<ActorMessage> + 'static,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = AWError> + 'static,
     S::Future: 'static,
     B: 'static,
     T::Context: ToEnvelope<T, ActorMessage>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = S::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.borrow_mut().poll_ready(cx)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+    fn call(&self, req: ServiceRequest) -> Self::Future {
         let store = self.store.clone();
-        let mut srv = self.service.clone();
+        let srv = self.service.clone();
         let max_requests = self.max_requests;
         let interval = Duration::from_secs(self.interval);
         let identifier = self.identifier.clone();
         Box::pin(async move {
-            let identifier: String = (identifier)(&req)?;
+            let identifier: String = (identifier)(&req).map_err(ErrorInternalServerError)?;
             let remaining: ActorResponse = store
                 .send(ActorMessage::Get(String::from(&identifier)))
-                .await?;
+                .await
+                .map_err(ErrorInternalServerError)?;
             match remaining {
                 ActorResponse::Get(opt) => {
                     let opt = opt.await?;
@@ -172,19 +171,21 @@ where
                         // Existing entry in store
                         let expiry = store
                             .send(ActorMessage::Expire(String::from(&identifier)))
-                            .await?;
+                            .await
+                            .map_err(ErrorInternalServerError)?;
                         let reset: Duration = match expiry {
                             ActorResponse::Expire(dur) => dur.await?,
                             _ => unreachable!(),
                         };
                         if c == 0 {
                             info!("Limit exceeded for client: {}", &identifier);
-                            let mut response = HttpResponse::TooManyRequests();
-                            // let mut response = (error_callback)(&mut response);
-                            response.set_header("x-ratelimit-limit", max_requests.to_string());
-                            response.set_header("x-ratelimit-remaining", c.to_string());
-                            response.set_header("x-ratelimit-reset", reset.as_secs().to_string());
-                            Err(response.into())
+
+                            Err(ARError::RateLimitError {
+                                max_requests,
+                                c,
+                                reset,
+                            }
+                            .into())
                         } else {
                             // Decrement value
                             let res: ActorResponse = store
@@ -192,27 +193,31 @@ where
                                     key: identifier,
                                     value: 1,
                                 })
-                                .await?;
+                                .await
+                                .map_err(ErrorInternalServerError)?;
                             let updated_value: usize = match res {
-                                ActorResponse::Update(c) => c.await?,
+                                ActorResponse::Update(c) => {
+                                    c.await.map_err(ErrorInternalServerError)?
+                                }
                                 _ => unreachable!(),
                             };
                             // Execute the request
                             let fut = srv.call(req);
-                            let mut res = fut.await?;
+                            let mut res = fut.await.map_err(ErrorInternalServerError)?;
                             let headers = res.headers_mut();
                             // Safe unwraps, since usize is always convertible to string
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-limit"),
-                                HeaderValue::from_str(max_requests.to_string().as_str())?,
+                                HeaderValue::from_str(max_requests.to_string().as_str()).unwrap(),
                             );
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-remaining"),
-                                HeaderValue::from_str(updated_value.to_string().as_str())?,
+                                HeaderValue::from_str(updated_value.to_string().as_str()).unwrap(),
                             );
                             headers.insert(
                                 HeaderName::from_static("x-ratelimit-reset"),
-                                HeaderValue::from_str(reset.as_secs().to_string().as_str())?,
+                                HeaderValue::from_str(reset.as_secs().to_string().as_str())
+                                    .unwrap(),
                             );
                             Ok(res)
                         }
@@ -225,13 +230,16 @@ where
                                 value: current_value,
                                 expiry: interval,
                             })
-                            .await?;
+                            .await
+                            .map_err(ErrorInternalServerError)?;
                         match res {
-                            ActorResponse::Set(c) => c.await?,
+                            ActorResponse::Set(c) => {
+                                c.await.map_err(|err| ErrorInternalServerError(err))?
+                            }
                             _ => unreachable!(),
                         }
                         let fut = srv.call(req);
-                        let mut res = fut.await?;
+                        let mut res = fut.await.map_err(|err| ErrorInternalServerError(err))?;
                         let headers = res.headers_mut();
                         // Safe unwraps, since usize is always convertible to string
                         headers.insert(

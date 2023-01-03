@@ -204,7 +204,7 @@ impl Handler<ActorMessage> for MemcacheStoreActor {
                             Ok(c) => match c {
                                 Some(v) => Ok(Some(v as usize)),
                                 None => Ok(None),
-                            }
+                            },
                             Err(e) => Err(ARError::ReadWriteError(format!("{:?}", &e))),
                         }
                     })),
@@ -246,10 +246,6 @@ impl Handler<ActorMessage> for MemcacheStoreActor {
         }
     }
 }
-
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -315,7 +311,7 @@ mod tests {
             _ => panic!("Shouldn't happen!"),
         };
     }
-    
+
     #[actix_rt::test]
     async fn test_expiry() {
         init();
@@ -357,6 +353,5 @@ mod tests {
             },
             _ => panic!("Shouldn't happen!"),
         };
-
     }
 }
