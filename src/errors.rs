@@ -1,8 +1,10 @@
 //! Errors that can occur during middleware processing stage
-use actix_web::error::Error as AWError;
-use actix_web::web::HttpResponse;
+use actix_web::body::BoxBody;
+use actix_web::error::ResponseError;
+use actix_web::http::StatusCode;
+use actix_web::HttpResponse;
 use failure::{self, Fail};
-use log::*;
+use std::time::Duration;
 
 /// Custom error type. Useful for logging and debugging different kinds of errors.
 /// This type can be converted to Actix Error, which defaults to
@@ -29,11 +31,33 @@ pub enum ARError {
     /// Identifier error
     #[fail(display = "client identification failed")]
     IdentificationError,
+
+    /// Rate limited error
+    #[fail(display = "rate limit failed")]
+    RateLimitError {
+        max_requests: usize,
+        c: usize,
+        reset: Duration,
+    },
 }
 
-impl From<ARError> for AWError {
-    fn from(err: ARError) -> AWError {
-        error!("{}", &err);
-        HttpResponse::InternalServerError().into()
+impl ResponseError for ARError {
+    fn status_code(&self) -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+
+    fn error_response(&self) -> HttpResponse<BoxBody> {
+        match *self {
+            Self::RateLimitError {
+                max_requests,
+                c,
+                reset,
+            } => HttpResponse::TooManyRequests()
+                .insert_header(("x-ratelimit-limit", max_requests.to_string()))
+                .insert_header(("x-ratelimit-remaining", c.to_string()))
+                .insert_header(("x-ratelimit-reset", reset.as_secs().to_string()))
+                .finish(),
+            _ => HttpResponse::InternalServerError().finish(),
+        }
     }
 }
